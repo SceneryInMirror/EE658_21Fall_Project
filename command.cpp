@@ -35,6 +35,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <queue>
+#include <vector>
+#include <set>
 #include "command.h"
 
 
@@ -45,6 +47,7 @@ struct cmdstruc command[NUMFUNCS] = {
    {"QUIT", quit, EXEC},
    {"LEV", lev, CKTLD},
    {"LOGICSIM", logicsim, CKTLD},
+   {"RFL", rfl, CKTLD},
 };
 
 enum e_state Gstate = EXEC;
@@ -330,9 +333,10 @@ description:
   write the values of outputs into [output file name].
 -----------------------------------------------------------------------*/
 void logicsim(char *cp) {
-   int i, j;
    char infile[MAXLINE], outfile[MAXLINE];
    std::queue<NSTRUC*> qnodes;
+   std::vector<int> pi_idx;
+   std::queue<int> in_value;
    // Qnode *front, *rear;
    NSTRUC *np;
    int level_idx;
@@ -354,38 +358,176 @@ void logicsim(char *cp) {
    fp = fopen(outfile, "w");
 
    // read inputs
-   read_inputs(infile);
+   read_inputs(infile, &pi_idx, &in_value);
 
-   // simulate values of each wires level by level according to their levelization
-   // first push all down nodes of primary inputs which are at level 1
-   // since the values of inputs are already decided, their values can be simulated
-   for (i = 0; i < Npi; i++) 
-      for (j = 0; j < Pinput[i]->fout; j++) 
-         if (Pinput[i]->dnodes[j]->level == 1)
-            // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
-            qnodes.push(Pinput[i]->dnodes[j]);
+   // print output port indices
+   for (int i = 0; i < Npo; i++) {
+      if (i == 0)
+         fprintf(fp, "%d", Poutput[i]->num);
+      else 
+         fprintf(fp, ",%d", Poutput[i]->num);
+   }
+   fprintf(fp, "\n");
 
-   while(!qnodes.empty()) {
-      // np = popQueue(front, &rear);
-      np = qnodes.front();
-      qnodes.pop();
-      sim(np);
-      // for each down node, if its level is exactly 1 larger than the current node,
-      // it will be pushed into the queue. Otherwise, it will be pushed into the queue
-      // later, since not all of its inputs' values are decided yet.
-      for (i = 0; i < np->fout; i++) {
-         if (np->dnodes[i]->level == (np->level + 1))
-            // rear = pushQueue(rear, np->dnodes[i]);
-            qnodes.push(np->dnodes[i]);
+
+   int loop = in_value.size() / pi_idx.size(); // loop is the number of input patterns
+
+   for (int l = 0; l < loop; l++) { // simulate for each input
+      // assign primary input values
+      for (int i = 0; i < pi_idx.size(); i++) {
+         for (int j = 0; j < Npi; j++) {
+            if (Pinput[j]->num == pi_idx[i]) {
+               Pinput[j]->value = in_value.front();
+               printf("input %d has value %d\n", Pinput[j]->num, Pinput[j]->value);
+               in_value.pop();
+               break;
+            }
+         }
       }
+
+      // simulate values of each wires level by level according to their levelization
+      // first push all down nodes of primary inputs which are at level 1
+      // since the values of inputs are already decided, their values can be simulated
+      for (int i = 0; i < Npi; i++) 
+         for (int j = 0; j < Pinput[i]->fout; j++) 
+            if (Pinput[i]->dnodes[j]->level == 1)
+               // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
+               qnodes.push(Pinput[i]->dnodes[j]);
+
+      while(!qnodes.empty()) {
+         // np = popQueue(front, &rear);
+         np = qnodes.front();
+         qnodes.pop();
+         sim(np);
+         // for each down node, if its level is exactly 1 larger than the current node,
+         // it will be pushed into the queue. Otherwise, it will be pushed into the queue
+         // later, since not all of its inputs' values are decided yet.
+         for (int i = 0; i < np->fout; i++) {
+            if (np->dnodes[i]->level == (np->level + 1))
+               // rear = pushQueue(rear, np->dnodes[i]);
+               qnodes.push(np->dnodes[i]);
+         }
+      }
+      for (int i = 0; i < Npo; i++) {
+         if (i == 0)
+            fprintf(fp, "%d", Poutput[i]->value);
+         else
+            fprintf(fp, ",%d", Poutput[i]->value);
+      }
+      if (l != loop - 1)
+         fprintf(fp, "\n");
    }
+
    // write into [output file name]
-   for (i = 0; i < Npo; i++) {
-      fprintf(fp, "%d,%d\n", Poutput[i]->num, Poutput[i]->value);
-   }
    fclose(fp);
 }
 
+// /*-----------------------------------------------------------------------
+// input: input file name, output file name
+// output: nothing
+// called by: main 
+// description:
+//   Simulate with given inputs.
+//   The command should be used as:
+//   "logicsim [input file name] [output file name]"
+//   It will read the values of inputs from [input file name] and 
+//   write the values of outputs into [output file name].
+// -----------------------------------------------------------------------*/
+// void logicsim(char *cp) {
+//    int i, j;
+//    char infile[MAXLINE], outfile[MAXLINE];
+//    std::queue<NSTRUC*> qnodes;
+//    // Qnode *front, *rear;
+//    NSTRUC *np;
+//    int level_idx;
+//    FILE *fp = NULL;
+//    level_idx = 1;
+
+//    // initialize the node queue
+//    // front = (Qnode *) malloc(sizeof(Qnode));
+//    // front->next = NULL;
+//    // rear = front;
+
+//    // the levelization information is required for simulation
+//    lev((char *)(""));
+
+//    // parse the input and output filenames
+//    if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
+//    printf("%s\n", infile);
+//    printf("%s\n", outfile);
+//    fp = fopen(outfile, "w");
+
+//    // read inputs
+//    read_inputs(infile);
+
+//    // simulate values of each wires level by level according to their levelization
+//    // first push all down nodes of primary inputs which are at level 1
+//    // since the values of inputs are already decided, their values can be simulated
+//    for (i = 0; i < Npi; i++) 
+//       for (j = 0; j < Pinput[i]->fout; j++) 
+//          if (Pinput[i]->dnodes[j]->level == 1)
+//             // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
+//             qnodes.push(Pinput[i]->dnodes[j]);
+
+//    while(!qnodes.empty()) {
+//       // np = popQueue(front, &rear);
+//       np = qnodes.front();
+//       qnodes.pop();
+//       sim(np);
+//       // for each down node, if its level is exactly 1 larger than the current node,
+//       // it will be pushed into the queue. Otherwise, it will be pushed into the queue
+//       // later, since not all of its inputs' values are decided yet.
+//       for (i = 0; i < np->fout; i++) {
+//          if (np->dnodes[i]->level == (np->level + 1))
+//             // rear = pushQueue(rear, np->dnodes[i]);
+//             qnodes.push(np->dnodes[i]);
+//       }
+//    }
+//    // write into [output file name]
+//    for (i = 0; i < Npo; i++) {
+//       fprintf(fp, "%d,%d\n", Poutput[i]->num, Poutput[i]->value);
+//    }
+//    fclose(fp);
+// }
+
+/*-----------------------------------------------------------------------
+input: output file name
+output: nothing
+called by: main 
+description:
+  generates a reduced list of faults required for the ATPG of the circuit.
+  In this function we only consider the check point theorem as a method 
+  to reduce the number of faults.
+-----------------------------------------------------------------------*/
+void rfl(char *cp) {
+   std::set<NSTRUC*> pi_branch;
+   std::set<NSTRUC*>::iterator it;
+   FILE *fp = NULL;
+   char outfile[MAXLINE];
+
+
+   for (int i = 0; i < Npi; i++) {
+      pi_branch.insert(Pinput[i]);
+   }
+   for (int i = 0; i < Nnodes; i++) {
+      if (Node[i].fout > 1) {
+         for (int j = 0; j < Node[i].fout; j++) {
+            pi_branch.insert(Node[i].dnodes[j]);
+         }
+      }
+   }
+
+   // parse the output filename
+   if (sscanf(cp, "%s", &outfile) != 1) {printf("Incorrect input\n"); return;}
+   printf("%s\n", outfile);
+   fp = fopen(outfile, "w");
+
+   for (it = pi_branch.begin(); it != pi_branch.end(); ++it) {
+      fprintf(fp, "%d@0\n", (*it)->num);
+      fprintf(fp, "%d@1\n", (*it)->num);
+   }
+   fclose(fp);
+}
 
 // /*======================================================================*/
 
@@ -480,26 +622,54 @@ called by: logicsim
 description:
   Read input values.
 -----------------------------------------------------------------------*/
-void read_inputs(char *cp) {
+void read_inputs(char *cp, std::vector<int> * pi_idx, std::queue<int> * in_value) {
    FILE *fd;
    int idx, value;
+   char temp;
    int i;
    printf("input file name: %s\n", cp);
    if ((fd = fopen(cp, "r")) == NULL) {
       printf("File %s does not exist!\n", cp);
       return;
    }
-   while (fscanf(fd, "%d,%d", &idx, &value) != EOF) {
-      for (i = 0; i < Npi; i++) {
-         if (Pinput[i]->num == idx) {
-            Pinput[i]->value = value;
-            printf("input %d has value %d\n", idx, value);
-            break;
-         }
-      }
+   while (fscanf(fd, "%d%c", &idx, &temp) != EOF) {
+      pi_idx->push_back(idx);
+      if (temp == '\n' || temp == '\r')
+         break;
+   }
+   while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
+      in_value->push(value);
    }
    fclose(fd);
 }
+
+// /*-----------------------------------------------------------------------
+// input: input file name
+// output: nothing
+// called by: logicsim 
+// description:
+//   Read input values.
+// -----------------------------------------------------------------------*/
+// void read_inputs(char *cp) {
+//    FILE *fd;
+//    int idx, value;
+//    int i;
+//    printf("input file name: %s\n", cp);
+//    if ((fd = fopen(cp, "r")) == NULL) {
+//       printf("File %s does not exist!\n", cp);
+//       return;
+//    }
+//    while (fscanf(fd, "%d,%d", &idx, &value) != EOF) {
+//       for (i = 0; i < Npi; i++) {
+//          if (Pinput[i]->num == idx) {
+//             Pinput[i]->value = value;
+//             printf("input %d has value %d\n", idx, value);
+//             break;
+//          }
+//       }
+//    }
+//    fclose(fd);
+// }
 
 /*-----------------------------------------------------------------------
 input: node

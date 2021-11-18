@@ -2,6 +2,7 @@
 #define COMMAND_H
 
 #include <ctype.h>
+#include <queue>
 
 #define MAXLINE 81               /* Input buffer size */
 #define MAXNAME 31               /* File name size */
@@ -10,7 +11,7 @@
 #define Lowcase(x) ((isalpha(x) && isupper(x))? tolower(x) : (x))
 
 /*-------------------- Command Definitions --------------------*/
-enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM};        /* command list */
+enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL};        /* command list */
 enum e_state {EXEC, CKTLD};         /* Gstate values */
 enum e_ntype {GATE, PI, FB, PO};    /* column 1 of circuit format */
 enum e_gtype {IPT, BRCH, XOR, OR, NOR, NOT, NAND, AND};  /* gate types */
@@ -33,9 +34,9 @@ typedef struct n_struc {
    int value;                 /* value of the gate output */
 } NSTRUC;                     
 
-#define NUMFUNCS 6
-void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *);
-void read_cktname(char *), clear(), allocate(), read_inputs(char *), sim(NSTRUC *);
+#define NUMFUNCS 7
+void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *);
+void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *);
 
 extern struct cmdstruc command[NUMFUNCS];
 
