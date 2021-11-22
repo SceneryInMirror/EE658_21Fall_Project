@@ -253,7 +253,6 @@ void lev(char *cp) {
    char buf[MAXLINE];
    int i = 0, j = 0;
    std::queue<NSTRUC*> qnodes;
-   // Qnode *front, *rear;
    NSTRUC *np;
    int maxUpLevel;
    char txtname[MAXLINE];
@@ -292,16 +291,12 @@ void lev(char *cp) {
    for (i = 0; i < Npi; i++) {
       Pinput[i]->level = 0;
       for (j = 0; j < Pinput[i]->fout; j++) {
-         // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
          qnodes.push(Pinput[i]->dnodes[j]);
-         //printf(fp, "push node %d\n", Pinput[i]->dnodes[j]->num);
       }
    }
    while(!qnodes.empty()) {
-      // np = popQueue(front, &rear);
       np = qnodes.front();
       qnodes.pop();
-      //printf(fp, "pop node %d\n", np->num);
       maxUpLevel = 0;
       for (i = 0; i < np->fin; i++) {
          if (np->unodes[i]->level == -1) { maxUpLevel = -1; break; }
@@ -311,9 +306,7 @@ void lev(char *cp) {
       np->level = maxUpLevel + 1;
       for (i = 0; i < np->fout; i++) { 
          if (np->dnodes[i]->level > 0) continue;
-         // rear = pushQueue(rear, np->dnodes[i]); 
          qnodes.push(np->dnodes[i]);
-         //printf(fp, "push node %d\n", np->dnodes[i]->num); 
       }
    }
    for (i = 0; i < Nnodes; i++) {
@@ -339,16 +332,10 @@ void logicsim(char *cp) {
    std::queue<NSTRUC*> qnodes;
    std::vector<int> pi_idx;
    std::queue<int> in_value;
-   // Qnode *front, *rear;
    NSTRUC *np;
    int level_idx;
    FILE *fp = NULL;
    level_idx = 1;
-
-   // initialize the node queue
-   // front = (Qnode *) malloc(sizeof(Qnode));
-   // front->next = NULL;
-   // rear = front;
 
    // the levelization information is required for simulation
    lev((char *)(""));
@@ -393,11 +380,9 @@ void logicsim(char *cp) {
       for (int i = 0; i < Npi; i++) 
          for (int j = 0; j < Pinput[i]->fout; j++) 
             if (Pinput[i]->dnodes[j]->level == 1)
-               // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
                qnodes.push(Pinput[i]->dnodes[j]);
 
       while(!qnodes.empty()) {
-         // np = popQueue(front, &rear);
          np = qnodes.front();
          qnodes.pop();
          sim(np);
@@ -406,7 +391,6 @@ void logicsim(char *cp) {
          // later, since not all of its inputs' values are decided yet.
          for (int i = 0; i < np->fout; i++) {
             if (np->dnodes[i]->level == (np->level + 1))
-               // rear = pushQueue(rear, np->dnodes[i]);
                qnodes.push(np->dnodes[i]);
          }
       }
@@ -423,74 +407,6 @@ void logicsim(char *cp) {
    // write into [output file name]
    fclose(fp);
 }
-
-// /*-----------------------------------------------------------------------
-// input: input file name, output file name
-// output: nothing
-// called by: main 
-// description:
-//   Simulate with given inputs.
-//   The command should be used as:
-//   "logicsim [input file name] [output file name]"
-//   It will read the values of inputs from [input file name] and 
-//   write the values of outputs into [output file name].
-// -----------------------------------------------------------------------*/
-// void logicsim(char *cp) {
-//    int i, j;
-//    char infile[MAXLINE], outfile[MAXLINE];
-//    std::queue<NSTRUC*> qnodes;
-//    // Qnode *front, *rear;
-//    NSTRUC *np;
-//    int level_idx;
-//    FILE *fp = NULL;
-//    level_idx = 1;
-
-//    // initialize the node queue
-//    // front = (Qnode *) malloc(sizeof(Qnode));
-//    // front->next = NULL;
-//    // rear = front;
-
-//    // the levelization information is required for simulation
-//    lev((char *)(""));
-
-//    // parse the input and output filenames
-//    if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
-//    printf("%s\n", infile);
-//    printf("%s\n", outfile);
-//    fp = fopen(outfile, "w");
-
-//    // read inputs
-//    read_inputs(infile);
-
-//    // simulate values of each wires level by level according to their levelization
-//    // first push all down nodes of primary inputs which are at level 1
-//    // since the values of inputs are already decided, their values can be simulated
-//    for (i = 0; i < Npi; i++) 
-//       for (j = 0; j < Pinput[i]->fout; j++) 
-//          if (Pinput[i]->dnodes[j]->level == 1)
-//             // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
-//             qnodes.push(Pinput[i]->dnodes[j]);
-
-//    while(!qnodes.empty()) {
-//       // np = popQueue(front, &rear);
-//       np = qnodes.front();
-//       qnodes.pop();
-//       sim(np);
-//       // for each down node, if its level is exactly 1 larger than the current node,
-//       // it will be pushed into the queue. Otherwise, it will be pushed into the queue
-//       // later, since not all of its inputs' values are decided yet.
-//       for (i = 0; i < np->fout; i++) {
-//          if (np->dnodes[i]->level == (np->level + 1))
-//             // rear = pushQueue(rear, np->dnodes[i]);
-//             qnodes.push(np->dnodes[i]);
-//       }
-//    }
-//    // write into [output file name]
-//    for (i = 0; i < Npo; i++) {
-//       fprintf(fp, "%d,%d\n", Poutput[i]->num, Poutput[i]->value);
-//    }
-//    fclose(fp);
-// }
 
 /*-----------------------------------------------------------------------
 input: output file name
@@ -555,7 +471,6 @@ void dfs(char *cp) {
    std::vector<int> pi_idx;
    std::queue<int> in_value;
    std::set<std::pair<int, int> > detectable_faults;
-   // Qnode *front, *rear;
    NSTRUC *np;
    int level_idx = 1;
 
@@ -595,11 +510,9 @@ void dfs(char *cp) {
       for (int i = 0; i < Npi; i++) 
          for (int j = 0; j < Pinput[i]->fout; j++) 
             if (Pinput[i]->dnodes[j]->level == 1)
-               // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
                qnodes.push(Pinput[i]->dnodes[j]);
 
       while(!qnodes.empty()) {
-         // np = popQueue(front, &rear);
          np = qnodes.front();
          qnodes.pop();
          sim(np);
@@ -612,15 +525,11 @@ void dfs(char *cp) {
          // later, since not all of its inputs' values are decided yet.
          for (int i = 0; i < np->fout; i++) {
             if (np->dnodes[i]->level == (np->level + 1))
-               // rear = pushQueue(rear, np->dnodes[i]);
                qnodes.push(np->dnodes[i]);
          }
       }
       for (int i = 0; i < Npo; i++) {
-         //int len = Poutput[i]->fault_list->size();
-         //for (int j = 0; j < len; j++) {
          for (std::set< std::pair<int, int> >::iterator it = Poutput[i]->fault_list->begin(); it != Poutput[i]->fault_list->end(); ++it) {
-            //fprintf(fp, "%d@%d\n", (*it).first, (*it).second);
             detectable_faults.insert(*it);
          }   
       }
@@ -629,8 +538,11 @@ void dfs(char *cp) {
    for (std::set< std::pair<int, int> >::iterator it = detectable_faults.begin(); it != detectable_faults.end(); ++it) {
       fprintf(fp, "%d@%d\n", (*it).first, (*it).second);   
    }
+   
+   // release all fault lists
+   for (int i = 0; i < Nnodes; i++)
+      delete(Node[i].fault_list);
 
-   // write into [output file name]
    fclose(fp);
 }
 
@@ -748,34 +660,6 @@ void read_inputs(char *cp, std::vector<int> * pi_idx, std::queue<int> * in_value
    fclose(fd);
 }
 
-// /*-----------------------------------------------------------------------
-// input: input file name
-// output: nothing
-// called by: logicsim 
-// description:
-//   Read input values.
-// -----------------------------------------------------------------------*/
-// void read_inputs(char *cp) {
-//    FILE *fd;
-//    int idx, value;
-//    int i;
-//    printf("input file name: %s\n", cp);
-//    if ((fd = fopen(cp, "r")) == NULL) {
-//       printf("File %s does not exist!\n", cp);
-//       return;
-//    }
-//    while (fscanf(fd, "%d,%d", &idx, &value) != EOF) {
-//       for (i = 0; i < Npi; i++) {
-//          if (Pinput[i]->num == idx) {
-//             Pinput[i]->value = value;
-//             printf("input %d has value %d\n", idx, value);
-//             break;
-//          }
-//       }
-//    }
-//    fclose(fd);
-// }
-
 /*-----------------------------------------------------------------------
 input: node
 output: nothing
@@ -861,8 +745,6 @@ description:
 -----------------------------------------------------------------------*/
 void propagate_fault(NSTRUC *np) {
    std::vector<NSTRUC *> cinputs;    // inputs with controlling values
-   //std::vector<int> ncinputs_idx;    // the indices of inputs with non-controlling values
-   //std::vector<int> ncinputs_value;    // the values of inputs with non-controlling values
    std::set<std::pair<int, int> > cinput_faults;    // faults shared by all fault lists of controlling inputs
    std::set<std::pair<int, int> > ncinput_faults;    // all faults in the fault lists of non-controlling inputs
    bool cinput_exist = false;
@@ -874,11 +756,6 @@ void propagate_fault(NSTRUC *np) {
             cinputs.push_back(np->unodes[i]);
          }
          else {
-            int len = np->unodes[i]->fault_list->size();
-            // for (int i = 0; i < len; i++) {
-            //    noncontrolling_inputs_idx.push_back(np->unodes[i]->num);
-            //    noncontrolling_inputs_value.push_back(np->unodes[i]->value);
-            // }
             for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
                ncinput_faults.insert(*it);
             }
@@ -892,11 +769,6 @@ void propagate_fault(NSTRUC *np) {
             cinputs.push_back(np->unodes[i]);
          }
          else {
-            int len = np->unodes[i]->fault_list->size();
-            // for (int i = 0; i < len; i++) {
-            //    noncontrolling_inputs_idx.push_back(np->unodes[i]->num);
-            //    noncontrolling_inputs_value.push_back(np->unodes[i]->value);
-            // }
             for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
                ncinput_faults.insert(*it);
             }
@@ -910,17 +782,10 @@ void propagate_fault(NSTRUC *np) {
       for (std::set< std::pair<int, int> >::iterator it = cinputs[0]->fault_list->begin(); it != cinputs[0]->fault_list->end(); ++it)
          cinput_faults.insert(*it);
       for (int i = 1; i < n_cinputs; i++) {
-         //int len = cinputs[i]->fault_list->size();
-         //for (int j = 0; j < len; j++) {
          for (std::set< std::pair<int, int> >::iterator it = cinput_faults.begin(); it != cinput_faults.end(); ++it) {
             if (cinputs[i]->fault_list->find(*it) == cinputs[i]->fault_list->end())
                cinput_faults.erase(it);   
          }
-         // for (std::set< std::pair<int, int> >::iterator it = cinputs[i]->fault_list->begin(); it != cinputs[i]->fault_list->end(); ++it) {
-         //    if (ncinput_faults.find(*it) == ncinput_faults.end()) {
-         //      np->fault_list->insert(*it);
-         //    }
-         // }
       }
       for (std::set< std::pair<int, int> >::iterator it = cinput_faults.begin(); it != cinput_faults.end(); ++it) {
          if (ncinput_faults.find(*it) == ncinput_faults.end())
@@ -929,8 +794,6 @@ void propagate_fault(NSTRUC *np) {
    }
    else {
       for (int i = 0; i < np->fin; i++) {
-         //int len = np->unodes[i]->fault_list.size();
-         // for (int j = 0; j < len; j++) {
          for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
             np->fault_list->insert(*it);
          }
@@ -938,6 +801,13 @@ void propagate_fault(NSTRUC *np) {
    }
 }
 
+/*-----------------------------------------------------------------------
+input: nothing
+output: nothing
+called by: dfs 
+description:
+  Reset all fault lists.
+-----------------------------------------------------------------------*/
 void reset_fault_list() {
    for (int i = 0; i < Nnodes; i++) {
       delete(Node[i].fault_list);

@@ -36,8 +36,6 @@ typedef struct n_struc {
    int level;                 /* level of the gate output */
    int value;                 /* value of the gate output */
    std::set<std::pair<int, int> > *fault_list;    /* fault list */
-   //std::vector<int> fault_idx;    /* the idx from fault list */
-   //std::vector<int> fault_value;    /* the values from fault list */
 } NSTRUC;                     
 
 #define NUMFUNCS 8
