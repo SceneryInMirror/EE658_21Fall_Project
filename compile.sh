@@ -1,4 +1,4 @@
 #gcc -o simulator readckt.c
-g++ -c command.cpp
-g++ -c simulator.cpp
-g++ command.o simulator.o -o simulator
+g++ -g -c command.cpp
+g++ -g -c simulator.cpp
+g++ -g command.o simulator.o -o simulator

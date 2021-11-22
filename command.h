@@ -3,6 +3,9 @@
 
 #include <ctype.h>
 #include <queue>
+#include <vector>
+#include <set>
+#include <utility>
 
 #define MAXLINE 81               /* Input buffer size */
 #define MAXNAME 31               /* File name size */
@@ -11,7 +14,7 @@
 #define Lowcase(x) ((isalpha(x) && isupper(x))? tolower(x) : (x))
 
 /*-------------------- Command Definitions --------------------*/
-enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL};        /* command list */
+enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL, DFS};        /* command list */
 enum e_state {EXEC, CKTLD};         /* Gstate values */
 enum e_ntype {GATE, PI, FB, PO};    /* column 1 of circuit format */
 enum e_gtype {IPT, BRCH, XOR, OR, NOR, NOT, NAND, AND};  /* gate types */
@@ -32,11 +35,14 @@ typedef struct n_struc {
    struct n_struc **dnodes;   /* pointer to array of down nodes */
    int level;                 /* level of the gate output */
    int value;                 /* value of the gate output */
+   std::set<std::pair<int, int> > *fault_list;    /* fault list */
+   //std::vector<int> fault_idx;    /* the idx from fault list */
+   //std::vector<int> fault_value;    /* the values from fault list */
 } NSTRUC;                     
 
-#define NUMFUNCS 7
-void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *);
-void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *);
+#define NUMFUNCS 8
+void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *), dfs(char *);
+void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *), propagate_fault(NSTRUC *), reset_fault_list();
 
 extern struct cmdstruc command[NUMFUNCS];
 

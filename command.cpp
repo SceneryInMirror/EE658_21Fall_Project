@@ -37,6 +37,7 @@
 #include <queue>
 #include <vector>
 #include <set>
+#include <utility>
 #include "command.h"
 
 
@@ -48,6 +49,7 @@ struct cmdstruc command[NUMFUNCS] = {
    {"LEV", lev, CKTLD},
    {"LOGICSIM", logicsim, CKTLD},
    {"RFL", rfl, CKTLD},
+   {"DFS", dfs, CKTLD},
 };
 
 enum e_state Gstate = EXEC;
@@ -324,7 +326,7 @@ void lev(char *cp) {
 /*-----------------------------------------------------------------------
 input: input file name, output file name
 output: nothing
-called by: main 
+called by: main, dfs 
 description:
   Simulate with given inputs.
   The command should be used as:
@@ -526,6 +528,109 @@ void rfl(char *cp) {
       fprintf(fp, "%d@0\n", (*it)->num);
       fprintf(fp, "%d@1\n", (*it)->num);
    }
+   fclose(fp);
+}
+
+/*-----------------------------------------------------------------------
+input: input file name, output file name
+output: nothing
+called by: main 
+description:
+  The DFS simulator simply has test patterns (one or many) as input 
+  and reports all the detectable (so not just the RFL) faults using 
+  these test patterns.
+-----------------------------------------------------------------------*/
+
+// step 1: logic simulation, values of all nodes
+// step 2: fault list for each node, starting from the PIs
+// step 3: fault propagation
+//    case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
+//    case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
+// step 4: print all detectable faults at the outputs    
+
+void dfs(char *cp) {
+   char infile[MAXLINE], outfile[MAXLINE];
+   FILE *fp = NULL;
+   std::queue<NSTRUC*> qnodes;
+   std::vector<int> pi_idx;
+   std::queue<int> in_value;
+   std::set<std::pair<int, int> > detectable_faults;
+   // Qnode *front, *rear;
+   NSTRUC *np;
+   int level_idx = 1;
+
+   // parse the input and output filenames
+   if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
+   printf("%s\n", infile);
+   printf("%s\n", outfile);
+   fp = fopen(outfile, "w");
+
+   // read inputs
+   read_inputs(infile, &pi_idx, &in_value);
+
+   int loop = in_value.size() / pi_idx.size(); // loop is the number of input patterns
+
+   for (int l = 0; l < loop; l++) { // simulate for each input
+
+      reset_fault_list();
+
+      //********** step 1: simulate values of all nodes **********//
+      //********** step 2: create fault list for each node, starting from the PIs **********//
+      // assign primary input values
+      for (int i = 0; i < pi_idx.size(); i++) {
+         for (int j = 0; j < Npi; j++) {
+            if (Pinput[j]->num == pi_idx[i]) {
+               Pinput[j]->value = in_value.front();
+               Pinput[j]->fault_list->insert(std::make_pair(Pinput[j]->num, (Pinput[j]->value == 1 ? 0 : 1)));
+               printf("input %d has value %d\n", Pinput[j]->num, Pinput[j]->value);
+               in_value.pop();
+               break;
+            }
+         }
+      }
+
+      // simulate values of each wires level by level according to their levelization
+      // first push all down nodes of primary inputs which are at level 1
+      // since the values of inputs are already decided, their values can be simulated
+      for (int i = 0; i < Npi; i++) 
+         for (int j = 0; j < Pinput[i]->fout; j++) 
+            if (Pinput[i]->dnodes[j]->level == 1)
+               // rear = pushQueue(rear, Pinput[i]->dnodes[j]);
+               qnodes.push(Pinput[i]->dnodes[j]);
+
+      while(!qnodes.empty()) {
+         // np = popQueue(front, &rear);
+         np = qnodes.front();
+         qnodes.pop();
+         sim(np);
+         //********** step 3: propagate fault lists **********//
+         // case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
+         // case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
+         propagate_fault(np);
+         // for each down node, if its level is exactly 1 larger than the current node,
+         // it will be pushed into the queue. Otherwise, it will be pushed into the queue
+         // later, since not all of its inputs' values are decided yet.
+         for (int i = 0; i < np->fout; i++) {
+            if (np->dnodes[i]->level == (np->level + 1))
+               // rear = pushQueue(rear, np->dnodes[i]);
+               qnodes.push(np->dnodes[i]);
+         }
+      }
+      for (int i = 0; i < Npo; i++) {
+         //int len = Poutput[i]->fault_list->size();
+         //for (int j = 0; j < len; j++) {
+         for (std::set< std::pair<int, int> >::iterator it = Poutput[i]->fault_list->begin(); it != Poutput[i]->fault_list->end(); ++it) {
+            //fprintf(fp, "%d@%d\n", (*it).first, (*it).second);
+            detectable_faults.insert(*it);
+         }   
+      }
+   }
+   //********** step 4: print all detectable faults at the outputs *//   
+   for (std::set< std::pair<int, int> >::iterator it = detectable_faults.begin(); it != detectable_faults.end(); ++it) {
+      fprintf(fp, "%d@%d\n", (*it).first, (*it).second);   
+   }
+
+   // write into [output file name]
    fclose(fp);
 }
 
@@ -746,6 +851,100 @@ void sim(NSTRUC *np) {
    }
    //printf("node %d has type: %d value: %d level: %d\n", np->num, np->type, np->value, np->level);
 }
+
+/*-----------------------------------------------------------------------
+input: node
+output: nothing
+called by: dfs 
+description:
+  Propagate fault list.
+-----------------------------------------------------------------------*/
+void propagate_fault(NSTRUC *np) {
+   std::vector<NSTRUC *> cinputs;    // inputs with controlling values
+   //std::vector<int> ncinputs_idx;    // the indices of inputs with non-controlling values
+   //std::vector<int> ncinputs_value;    // the values of inputs with non-controlling values
+   std::set<std::pair<int, int> > cinput_faults;    // faults shared by all fault lists of controlling inputs
+   std::set<std::pair<int, int> > ncinput_faults;    // all faults in the fault lists of non-controlling inputs
+   bool cinput_exist = false;
+
+   if (np->type == OR or np->type == NOR) {
+      for (int i = 0; i < np->fin; i++) {
+         if (np->unodes[i]->value == 1) {
+            cinput_exist = true;
+            cinputs.push_back(np->unodes[i]);
+         }
+         else {
+            int len = np->unodes[i]->fault_list->size();
+            // for (int i = 0; i < len; i++) {
+            //    noncontrolling_inputs_idx.push_back(np->unodes[i]->num);
+            //    noncontrolling_inputs_value.push_back(np->unodes[i]->value);
+            // }
+            for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
+               ncinput_faults.insert(*it);
+            }
+         }
+      }
+   }
+   else if (np->type == NAND or np->type == AND) {
+      for (int i = 0; i < np->fin; i++) {
+         if (np->unodes[i]->value == 0) {
+            cinput_exist = true;
+            cinputs.push_back(np->unodes[i]);
+         }
+         else {
+            int len = np->unodes[i]->fault_list->size();
+            // for (int i = 0; i < len; i++) {
+            //    noncontrolling_inputs_idx.push_back(np->unodes[i]->num);
+            //    noncontrolling_inputs_value.push_back(np->unodes[i]->value);
+            // }
+            for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
+               ncinput_faults.insert(*it);
+            }
+         }
+      }
+   }
+
+   np->fault_list->insert(std::make_pair(np->num, (np->value == 1 ? 0 : 1)));
+   if (cinput_exist) {
+      int n_cinputs = cinputs.size();
+      for (std::set< std::pair<int, int> >::iterator it = cinputs[0]->fault_list->begin(); it != cinputs[0]->fault_list->end(); ++it)
+         cinput_faults.insert(*it);
+      for (int i = 1; i < n_cinputs; i++) {
+         //int len = cinputs[i]->fault_list->size();
+         //for (int j = 0; j < len; j++) {
+         for (std::set< std::pair<int, int> >::iterator it = cinput_faults.begin(); it != cinput_faults.end(); ++it) {
+            if (cinputs[i]->fault_list->find(*it) == cinputs[i]->fault_list->end())
+               cinput_faults.erase(it);   
+         }
+         // for (std::set< std::pair<int, int> >::iterator it = cinputs[i]->fault_list->begin(); it != cinputs[i]->fault_list->end(); ++it) {
+         //    if (ncinput_faults.find(*it) == ncinput_faults.end()) {
+         //      np->fault_list->insert(*it);
+         //    }
+         // }
+      }
+      for (std::set< std::pair<int, int> >::iterator it = cinput_faults.begin(); it != cinput_faults.end(); ++it) {
+         if (ncinput_faults.find(*it) == ncinput_faults.end())
+            np->fault_list->insert(*it);   
+      }
+   }
+   else {
+      for (int i = 0; i < np->fin; i++) {
+         //int len = np->unodes[i]->fault_list.size();
+         // for (int j = 0; j < len; j++) {
+         for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
+            np->fault_list->insert(*it);
+         }
+      }
+   }
+}
+
+void reset_fault_list() {
+   for (int i = 0; i < Nnodes; i++) {
+      delete(Node[i].fault_list);
+      Node[i].fault_list = new(std::set<std::pair<int, int> >);
+   }
+}
+
 
 /*========================= End of program ============================*/
 
