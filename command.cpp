@@ -39,7 +39,12 @@
 #include <set>
 #include <utility>
 #include "command.h"
-
+#include <conio.h>
+#include <fstream>
+#include <iostream>
+#include <algorithm>
+#include <iterator>
+#include <math.h>
 
 struct cmdstruc command[NUMFUNCS] = {
    {"READ", cread, EXEC},
@@ -50,6 +55,7 @@ struct cmdstruc command[NUMFUNCS] = {
    {"LOGICSIM", logicsim, CKTLD},
    {"RFL", rfl, CKTLD},
    {"DFS", dfs, CKTLD},
+   {"PFS",pfs,CKTLD}
 };
 
 enum e_state Gstate = EXEC;
@@ -546,6 +552,85 @@ void dfs(char *cp) {
    fclose(fp);
 }
 
+
+/*-----------------------------------------------------------------------
+input: input test pattern file name, input fault list file name, output file name
+output: nothing
+called by: main
+description:
+  The PFS simulator gets a list of faults and a list of test patterns (one
+  or many) as inputs and reports which one of the faults can be detected
+  with these test patterns using the PFS (single pattern, parallel faults
+  simulation) method.
+-----------------------------------------------------------------------*/
+
+// step 1: Determine bit-width of the processor
+// step 2: fault list for each node, starting from the PIs
+// step 3: fault propagation
+//    case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
+//    case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
+// step 4: print all detectable faults at the outputs
+
+void pfs(char *cp) {
+    //find the bit width of processor
+    long l;
+    short bit_width = (8 * sizeof(l));
+    printf("Word size of this machine is %hi bits\n", bit_width);
+
+    FILE *fp = NULL;
+    //std::queue<NSTRUC*> qnodes;
+    //std::vector<int> pi_idx;
+    //std::queue<int> in_value;
+    //std::set<std::pair<int, int> > detectable_faults;
+    NSTRUC *np;
+    //int level_idx = 1;
+
+    char infile1[MAXLINE], infile2[MAXLINE], outfile[MAXLINE];
+    // parse the input and output filenames
+    if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {printf("Incorrect input\n"); return;}
+    //printf("%s\n", infile1);
+    //printf("%s\n", infile2);
+    //printf("%s\n", outfile);
+    fp = fopen(outfile, "w");
+
+    std::ifstream file(infile2);
+
+    // new lines will be skipped unless we stop it from happening:
+    file.unsetf(std::ios_base::skipws);
+
+    // count the newlines with an algorithm specialized for counting:
+    unsigned fault_number = std::count(
+            std::istream_iterator<char>(file),
+            std::istream_iterator<char>(),
+            '\n');
+
+    std::cout << "Lines: " << fault_number << "\n";
+
+    int number_words;
+    number_words = fault_bit_comparison(fault_number, bit_width);
+    printf("Number of words: %d", number_words);
+
+    for (int i = 0; i < number_words; i++){
+        std::queue<int> words;
+
+
+    }
+
+
+
+    return;
+
+
+
+}
+
+
+
+
+
+
+
+
 // /*======================================================================*/
 
 /*-----------------------------------------------------------------------
@@ -818,3 +903,22 @@ void reset_fault_list() {
 
 /*========================= End of program ============================*/
 
+/*-----------------------------------------------------------------------
+input: nothing
+output: nothing
+called by: pfs
+description:
+  Compare number of faults with processor bit_width
+-----------------------------------------------------------------------*/
+
+int fault_bit_comparison(int fault_n, int bit_width){
+    int number_words;
+    if (fault_n > bit_width - 1) {
+        number_words = ceil((1.0 * fault_n) / (bit_width - 1));
+        //int remaining = fault_n - bit_width;
+    }
+    else {
+        number_words = 1;
+    }
+    return number_words ;
+}

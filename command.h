@@ -7,6 +7,7 @@
 #include <set>
 #include <utility>
 
+
 #define MAXLINE 81               /* Input buffer size */
 #define MAXNAME 31               /* File name size */
 
@@ -14,7 +15,7 @@
 #define Lowcase(x) ((isalpha(x) && isupper(x))? tolower(x) : (x))
 
 /*-------------------- Command Definitions --------------------*/
-enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL, DFS};        /* command list */
+enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL, DFS, PFS};        /* command list */
 enum e_state {EXEC, CKTLD};         /* Gstate values */
 enum e_ntype {GATE, PI, FB, PO};    /* column 1 of circuit format */
 enum e_gtype {IPT, BRCH, XOR, OR, NOR, NOT, NAND, AND};  /* gate types */
@@ -36,11 +37,13 @@ typedef struct n_struc {
    int level;                 /* level of the gate output */
    int value;                 /* value of the gate output */
    std::set<std::pair<int, int> > *fault_list;    /* fault list */
+
 } NSTRUC;                     
 
-#define NUMFUNCS 8
-void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *), dfs(char *);
+#define NUMFUNCS 9
+void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *), dfs(char *), pfs(char *);
 void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *), propagate_fault(NSTRUC *), reset_fault_list();
+int fault_bit_comparison(int, int);
 
 extern struct cmdstruc command[NUMFUNCS];
 
