@@ -576,22 +576,30 @@ void pfs(char *cp) {
     long l;
     short bit_width = (8 * sizeof(l));
     printf("Word size of this machine is %hi bits\n", bit_width);
-
     FILE *fp = NULL;
-    //std::queue<NSTRUC*> qnodes;
-    //std::vector<int> pi_idx;
-    //std::queue<int> in_value;
-    //std::set<std::pair<int, int> > detectable_faults;
+    FILE *fd = NULL;
     NSTRUC *np;
-    //int level_idx = 1;
+    std::vector<int> pi_idx;
+    std::queue<int> in_value;
+    int idx, value;
+    char temp;
+    int i;
 
     char infile1[MAXLINE], infile2[MAXLINE], outfile[MAXLINE];
     // parse the input and output filenames
     if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {printf("Incorrect input\n"); return;}
-    //printf("%s\n", infile1);
-    //printf("%s\n", infile2);
-    //printf("%s\n", outfile);
     fp = fopen(outfile, "w");
+
+    printf("input file name: %s\n", infile1);
+    if ((fd = fopen(infile1, "r")) == NULL) {
+        printf("File %s does not exist!\n", infile1);
+        return;
+    }
+    while (fscanf(fd, "%d%c", &idx, &temp) != EOF) {
+        pi_idx->push_back(idx);
+        if (temp == '\n' || temp == '\r')
+           break;
+    }
 
     std::ifstream file(infile2);
 
@@ -606,22 +614,28 @@ void pfs(char *cp) {
 
     std::cout << "Lines: " << fault_number << "\n";
 
-    int number_words;
-    number_words = fault_bit_comparison(fault_number, bit_width);
-    printf("Number of words: %d", number_words);
+    int nloops;
+    nloops = fault_bit_comparison(fault_number, bit_width);
+    printf("Number of words: %d", nloops);
 
-    for (int i = 0; i < number_words; i++){
-        std::queue<int> words;
+    for (int i = 0; i < nloops; i++) {
+        // step 1: read 31 or 63 faults from the fault list
+        std::vector<std::pair<int, int> > parallel_faults;
+        //load_faults(parallel_faults, bit_width);
+        // step 2: initialize the value vectors at the inputs
+
+        // step 3: simulate all value vectors at each node
+        // step 4: report
 
 
     }
 
+   // while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
+   //    in_value->push(value);
+   // }
 
-
+    fclose(fd);
     return;
-
-
-
 }
 
 
@@ -900,9 +914,6 @@ void reset_fault_list() {
    }
 }
 
-
-/*========================= End of program ============================*/
-
 /*-----------------------------------------------------------------------
 input: nothing
 output: nothing
@@ -922,3 +933,5 @@ int fault_bit_comparison(int fault_n, int bit_width){
     }
     return number_words ;
 }
+
+/*========================= End of program ============================*/
