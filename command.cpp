@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <iterator>
 #include <math.h>
+using namespace std;
 
 struct cmdstruc command[NUMFUNCS] = {
    {"READ", cread, EXEC},
@@ -583,11 +584,14 @@ void pfs(char *cp) {
     std::queue<int> in_value;
     int idx, value;
     char temp;
-    int i;
+    int i, j, k = 0;
 
     char infile1[MAXLINE], infile2[MAXLINE], outfile[MAXLINE];
     // parse the input and output filenames
-    if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {printf("Incorrect input\n"); return;}
+    if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {
+        printf("Incorrect input\n");
+        return;
+    }
     fp = fopen(outfile, "w");
 
     printf("input file name: %s\n", infile1);
@@ -596,46 +600,126 @@ void pfs(char *cp) {
         return;
     }
     while (fscanf(fd, "%d%c", &idx, &temp) != EOF) {
-        pi_idx->push_back(idx);
+        pi_idx.push_back(idx); //error?? '->' changed to '.' (newly added)
         if (temp == '\n' || temp == '\r')
-           break;
+            break;
     }
 
-    std::ifstream file(infile2);
+    while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
+        in_value.push(value);
+    }
+    fclose(fd);
 
+
+    //read DFS output file as input and load each SS@ fault into parallel_fault, newly added
+    std::vector<std::pair<int, int> > parallel_faults;
+    readInputFromOutput(infile2, &parallel_faults);
+    for(i = 0; i < parallel_faults.size(); i++) {
+        cout << "[" <<parallel_faults[i].first << ", "<< parallel_faults[i].second << "]" << endl;
+    }
+
+    //Start reading number of faults
+    std::ifstream file(infile2);
     // new lines will be skipped unless we stop it from happening:
     file.unsetf(std::ios_base::skipws);
-
-    // count the newlines with an algorithm specialized for counting:
+    // count the newlines with an algorithm specialized for counting, thus get number of faults
     unsigned fault_number = std::count(
             std::istream_iterator<char>(file),
             std::istream_iterator<char>(),
             '\n');
-
     std::cout << "Lines: " << fault_number << "\n";
 
     int nloops;
     nloops = fault_bit_comparison(fault_number, bit_width);
-    printf("Number of words: %d", nloops);
+    printf("Number of words: %d\n", nloops);
 
+    int remaining_faults;
+    remaining_faults = fault_number;
+    std::vector<std::pair<int, int> > fault_load;
+    std::queue<NSTRUC*> qnodes;
+    int p = 0; //delete later
     for (int i = 0; i < nloops; i++) {
         // step 1: read 31 or 63 faults from the fault list
-        std::vector<std::pair<int, int> > parallel_faults;
-        //load_faults(parallel_faults, bit_width);
+        fault_load = load_faults(parallel_faults, bit_width, remaining_faults);
         // step 2: initialize the value vectors at the inputs
+        PI_initial(pi_idx, in_value, bit_width, remaining_faults);
 
         // step 3: simulate all value vectors at each node
+
+        for (i = 0; i < Npi; i++) {
+            Pinput[i]->parallel_value = Pinput[i]->input_initial;
+            for (j = 0; j < Pinput[i]->parallel_value->size(); j++) {
+                printf("input %d has value %d\n", Pinput[i]->num, Pinput[i]->parallel_value->at(j));
+            }
+
+        }
+
+        for (i = 0; i < Npi; i++) {
+            for (j = 0; j < Pinput[i]->fout; j++) {
+                if (Pinput[i]->dnodes[j]->level == 1) {
+                    qnodes.push(Pinput[i]->dnodes[j]);
+                }
+            }
+        }
+
+        //while(!qnodes.empty()) {
+            //printf("Nodes remaining: %d", qnodes.front()->num);
+            //qnodes.pop();
+        //}
+        np = qnodes.front();
+        node_width(np, remaining_faults, bit_width);
+
+        while(!qnodes.empty()) {
+            np = qnodes.front();
+            qnodes.pop();
+
+            //Replacing fault value at corresponding bit of each node
+            fault_replace(fault_load, np);
+            for (i = 0; i < np->parallel_value->size(); i++){
+                printf("Node(after replacing) %d has value %d\n", np->num, np->parallel_value->at(i));
+            }
+
+            printf("hello1\n");
+            //simulate logic
+            sim_parallel(np);
+            printf("hello2\n");
+            k++; //delete later
+            for (int i = 0; i < np->fout; i++) {
+                if (np->dnodes[i]->level == (np->level + 1)) {
+                    qnodes.push(np->dnodes[i]);
+                }
+            }
+            printf("loop number %d\n", k);
+        }
+        if (remaining_faults >= bit_width){
+            remaining_faults = remaining_faults - bit_width;
+        }
+
+
+
         // step 4: report
-
-
     }
+
+    //fault_load = load_faults(parallel_faults, bit_width, remaining_faults);
+    //for(i = 0; i < fault_load.size(); i++) {
+        //cout << "[" <<fault_load[i].first << ", "<< fault_load[i].second << "]" << endl;
+    //}
+    //PI_initial(pi_idx, in_value, bit_width, remaining_faults);
+    //for (i = 0; i < Npi; i++){
+        //for (j = 0; j < Pinput[i]->input_initial->size(); j++) {
+            //cout << "Input"<< pi_idx[i] << "," << Pinput[i]->input_initial[j] << endl;
+
+            //printf("\nInput %d", Pinput[i]->input_initial->at(j));
+        //}
+    //}
+
 
    // while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
    //    in_value->push(value);
    // }
 
-    fclose(fd);
-    return;
+    //fclose(fd);
+
 }
 
 
@@ -934,4 +1018,293 @@ int fault_bit_comparison(int fault_n, int bit_width){
     return number_words ;
 }
 
+/*-----------------------------------------------------------------------
+input: nothing
+output: nothing
+called by: pfs
+description:
+  load faults into corresponding bit position
+-----------------------------------------------------------------------*/
+vector<pair<int, int> > load_faults(vector<std::pair<int, int> > parallel_faults, int bit_width, int remaining_faults){
+    vector<pair<int, int> > fault_load;
+    int i;
+    if (remaining_faults >= bit_width) {
+        for (i = 0; i < bit_width; i++) {
+            fault_load.push_back(parallel_faults[i]);
+        }
+    }
+    else if (remaining_faults < bit_width){
+        for (i = 0; i < remaining_faults; i++) {
+            fault_load.push_back(parallel_faults[i]);
+        }
+    }
+    return fault_load;
+}
+
+/*-----------------------------------------------------------------------
+input: nothing
+output: nothing
+called by: pfs
+description:
+  initialize the value vectors at the inputs
+-----------------------------------------------------------------------*/
+void PI_initial(vector<int> pi_idx, queue<int> in_value, int bit_width, int remaining_faults){
+    //NSTRUC *np;
+    int i, j, k;
+
+    for (i = 0; i < pi_idx.size(); i++) {
+        for (j = 0; j < Npi; j++) {
+            if (Pinput[j]->num == pi_idx[i]) {
+                Pinput[j]->input_initial = new(std::vector<int>);
+
+                if (remaining_faults >= bit_width) {
+                    for (k = 0; k < bit_width; k++) {
+                        Pinput[j]->input_initial->push_back(in_value.front());
+                    }
+
+                } else {
+                    for (k = 0; k < remaining_faults; k++) {
+                        Pinput[j]->input_initial->push_back(in_value.front());
+                    }
+                }
+                //cout << in_value.front() << endl;
+                in_value.pop();
+            }
+        }
+    }
+}
+/*-----------------------------------------------------------------------
+input: nothing
+output: nothing
+called by: pfs
+description:
+  read DFS output file as input and load each SS@ fault into parallel_fault
+-----------------------------------------------------------------------*/
+void readInputFromOutput(char *filename, std::vector<std::pair<int, int> > *parallel_fault){
+    FILE *fd;
+    int idx, temp;
+    if ((fd = fopen(filename, "r")) == NULL) {
+        printf("File %s does not exist!\n", filename);
+        return;
+    }
+    while (fscanf(fd, "%d@%d", &idx, &temp) != EOF) {
+        pair<int, int> subvec (idx, temp);
+        parallel_fault->push_back(subvec);
+    }
+}
+
+/*-----------------------------------------------------------------------
+input: node
+output: nothing
+called by: main
+description:
+  Simulate the value of the given node in parallel
+-----------------------------------------------------------------------*/
+void sim_parallel(NSTRUC *np) {
+    int i, j, k;
+    NSTRUC *input;
+    printf("hello3\n");
+    if (np->type == NOT) {
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 0;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 0)){
+                        np->parallel_value->at(j) = 1;
+                        break;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 0) {
+                    np->parallel_value->at(j) = 1;
+                    break;
+                }
+            }
+        }
+    }
+    else if (np->type == BRCH) {
+        printf("hello4\n");
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 0;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
+                        np->parallel_value->at(j) = 1;
+                        break;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 1) {
+                    np->parallel_value->at(j) = 1;
+                    break;
+                }
+            }
+        }
+        printf("hello5\n");
+    }
+    else if (np->type == XOR) {
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 0;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
+                        np->parallel_value->at(j) = (np->parallel_value->at(j) == 0) ? 1 : 0;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 1) {
+                    np->parallel_value->at(j) = (np->parallel_value->at(j) == 0) ? 1 : 0;
+                }
+            }
+        }
+    }
+    else if (np->type == OR) {
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 0;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
+                        np->parallel_value->at(j) = 1;
+                        break;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 1) {
+                    np->parallel_value->at(j) = 1;
+                    break;
+                }
+            }
+        }
+    }
+    else if (np->type == NOR) {
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 1;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
+                        np->parallel_value->at(j) = 0;
+                        break;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 1) {
+                    np->parallel_value->at(j) = 0;
+                    break;
+                }
+            }
+        }
+    }
+    else if (np->type == NAND) {
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 0;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 0)){
+                        np->parallel_value->at(j) = 1;
+                        break;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 0) {
+                    np->parallel_value->at(j) = 1;
+                    break;
+                }
+            }
+        }
+    }
+    else if (np->type == AND) {
+        //np->parallel_value = new(std::vector<int>);
+        for (j = 0; j < (np->parallel_value)->size(); j++) {
+            np->parallel_value->at(j) = 1;
+            for (i = 0; i < np->fin; i++) {
+                for (k = 0; k < Npi; k++){
+                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 0)){
+                        np->parallel_value->at(j) = 0;
+                        break;
+                    }
+                }
+                if (np->unodes[i]->parallel_value->at(j) == 0) {
+                    np->parallel_value->at(j) = 0;
+                    break;
+                }
+            }
+        }
+    }
+    printf("hello6\n");
+    for (i = 0; i < (np->parallel_value)->size(); i++){
+        printf("node %d has type: %d value: %d level: %d\n", np->num, np->type, np->parallel_value->at(i), np->level);
+    }
+}
+/*-----------------------------------------------------------------------
+input: node
+output: nothing
+called by: main
+description:
+  Initializing parallel width of each node
+-----------------------------------------------------------------------*/
+void node_width(NSTRUC *np, int remaining_faults, int bit_width){
+    int i, j, k, p = 0,h = 0;
+    if (remaining_faults >= bit_width){
+        for (i = 0; i < Nnodes; i++){
+            np = &Node[i];
+            np->parallel_value = new(std::vector<int>);
+            h = 0;
+            for (k = 0; k < Npi; k++){
+                if (np->num == Pinput[k]->num){
+                    h = 1;
+                    break;
+                }
+            }
+            if (h == 1) {
+                continue;
+            }
+            else{
+                for (j = 0; j < bit_width; j++) {
+                    (np->parallel_value)->push_back(0);
+                    p++; //delete later
+                    printf("#%d Node %d has value %d and size %d\n", p, np->num, np->parallel_value->at(j), np->parallel_value->size());
+                }
+            }
+        }
+    }
+    else{
+        for (i = 0; i < Nnodes; i++){
+            np = &Node[i];
+            np->parallel_value = new(std::vector<int>);
+            h = 0;
+            for (k = 0; k < Npi; k++){
+                if (np->num == Pinput[k]->num){
+                    h = 1;
+                    break;
+                }
+            }
+            if (h == 1) {
+                continue;
+            }
+            else{
+                for (j = 0; j < remaining_faults; j++) {
+                    (np->parallel_value)->push_back(0);
+                    p++; //delete later
+                    printf("#%d Node %d has value %d and size %d\n", p, np->num, np->parallel_value->at(j), np->parallel_value->size());
+                }
+            }
+        }
+    }
+
+}
+/*-----------------------------------------------------------------------
+input: node
+output: nothing
+called by: main
+description:
+  Replacing fault value at corresponding bit of each node
+-----------------------------------------------------------------------*/
+void fault_replace (vector<pair<int, int> >fault_load, NSTRUC *np){
+    int i;
+    for (i = 0; i < fault_load.size(); i++){
+        if (np->num == fault_load[i].first){
+            np->parallel_value->at(i) = fault_load[i].second;
+        }
+    }
+}
 /*========================= End of program ============================*/

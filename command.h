@@ -37,13 +37,16 @@ typedef struct n_struc {
    int level;                 /* level of the gate output */
    int value;                 /* value of the gate output */
    std::set<std::pair<int, int> > *fault_list;    /* fault list */
-
+   std::vector<int> *input_initial; /*primary input initialization*/
+   std::vector<int> *parallel_value; /*parallel values of each node*/
 } NSTRUC;                     
 
 #define NUMFUNCS 9
 void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *), dfs(char *), pfs(char *);
-void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *), propagate_fault(NSTRUC *), reset_fault_list();
+void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *), sim_parallel(NSTRUC *), propagate_fault(NSTRUC *), reset_fault_list(), PI_initial(std::vector<int>, std:: queue<int>, int, int), readInputFromOutput(char*, std::vector<std::pair<int, int> >*);
+void node_width(NSTRUC *, int, int), fault_replace (std::vector<std::pair<int, int> >fault_load, NSTRUC *);
 int fault_bit_comparison(int, int);
+std:: vector<std::pair<int, int> > load_faults(std::vector<std::pair<int, int> >, int, int);
 
 extern struct cmdstruc command[NUMFUNCS];
 
