@@ -39,13 +39,12 @@
 #include <set>
 #include <utility>
 #include "command.h"
-#include <conio.h>
 #include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <iterator>
 #include <math.h>
-using namespace std;
+#include <time.h>
 
 struct cmdstruc command[NUMFUNCS] = {
    {"READ", cread, EXEC},
@@ -56,7 +55,8 @@ struct cmdstruc command[NUMFUNCS] = {
    {"LOGICSIM", logicsim, CKTLD},
    {"RFL", rfl, CKTLD},
    {"DFS", dfs, CKTLD},
-   {"PFS",pfs,CKTLD}
+   {"PFS", pfs, CKTLD},
+   {"RTG", rtg, CKTLD},
 };
 
 enum e_state Gstate = EXEC;
@@ -226,8 +226,16 @@ void help(char *cp) {
    printf("print circuit information\n");
    printf("LEV - ");
    printf("levelize the circuit\n");
-   printf("LOGICSIM infilename outfilename - ");
+   printf("LOGICSIM inFile outFile - ");
    printf("read in the input file and write down simulation results of outputs\n");
+   printf("RFL outFile - ");
+   printf("write down the reduced fault list\n");
+   printf("DFS inFile outFile - ");
+   printf("read in the input file and write down deductive fault list\n");
+   printf("PFS testPatternFile faultListFile outFile - ");
+   printf("read in the test patterns and fault list, and report detectable faults\n");
+   printf("RTG ntot ntfcr testPatternFile fcFile - ");
+   printf("generate random test patterns and calculate the FC\n");
    printf("HELP - ");
    printf("print this help information\n");
    printf("QUIT - ");
@@ -349,8 +357,8 @@ void logicsim(char *cp) {
 
    // parse the input and output filenames
    if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
-   printf("%s\n", infile);
-   printf("%s\n", outfile);
+   printf("input file name: %s\n", infile);
+   printf("output file name: %s\n", outfile);
    fp = fopen(outfile, "w");
 
    // read inputs
@@ -374,7 +382,7 @@ void logicsim(char *cp) {
          for (int j = 0; j < Npi; j++) {
             if (Pinput[j]->num == pi_idx[i]) {
                Pinput[j]->value = in_value.front();
-               printf("input %d has value %d\n", Pinput[j]->num, Pinput[j]->value);
+               //printf("input %d has value %d\n", Pinput[j]->num, Pinput[j]->value);
                in_value.pop();
                break;
             }
@@ -402,10 +410,22 @@ void logicsim(char *cp) {
          }
       }
       for (int i = 0; i < Npo; i++) {
-         if (i == 0)
-            fprintf(fp, "%d", Poutput[i]->value);
-         else
-            fprintf(fp, ",%d", Poutput[i]->value);
+         if (i == 0) {
+            if (Poutput[i]->value == -1) {
+               fprintf(fp, "%c", 'X');
+            }
+            else {
+               fprintf(fp, "%d", Poutput[i]->value);
+            }
+         }
+         else {
+            if (Poutput[i]->value == -1) {
+               fprintf(fp, ",%c", 'X');
+            }
+            else{
+               fprintf(fp, ",%d", Poutput[i]->value);
+            }
+         }
       }
       if (l != loop - 1)
          fprintf(fp, "\n");
@@ -480,6 +500,9 @@ void dfs(char *cp) {
    std::set<std::pair<int, int> > detectable_faults;
    NSTRUC *np;
    int level_idx = 1;
+
+   // the levelization information is required for simulation
+   lev((char *)(""));
 
    // parse the input and output filenames
    if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
@@ -573,160 +596,317 @@ description:
 // step 4: print all detectable faults at the outputs
 
 void pfs(char *cp) {
-    //find the bit width of processor
-    long l;
-    short bit_width = (8 * sizeof(l));
-    printf("Word size of this machine is %hi bits\n", bit_width);
-    FILE *fp = NULL;
-    FILE *fd = NULL;
-    NSTRUC *np;
-    std::vector<int> pi_idx;
-    std::queue<int> in_value;
-    int idx, value;
-    char temp;
-    int i, j, k = 0;
+   long l;
+   int bw, value, idx, fv;
+   char temp;
+   NSTRUC *np;
+   std::vector<int> pi_idx;
+   std::queue<int> in_value;
+   std::queue<NSTRUC*> qnodes;
+   FILE * fi, *ff, *fo;
+   char infile1[MAXLINE], infile2[MAXLINE], outfile[MAXLINE];
+   std::vector<std::pair<int, int> > loaded_faults;
+   std::set<std::pair<int, int> > detected_faults;
 
-    char infile1[MAXLINE], infile2[MAXLINE], outfile[MAXLINE];
-    // parse the input and output filenames
-    if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {
-        printf("Incorrect input\n");
-        return;
-    }
-    fp = fopen(outfile, "w");
+   // the levelization information is required for simulation
+   lev((char *)(""));
 
-    printf("input file name: %s\n", infile1);
-    if ((fd = fopen(infile1, "r")) == NULL) {
-        printf("File %s does not exist!\n", infile1);
-        return;
-    }
-    while (fscanf(fd, "%d%c", &idx, &temp) != EOF) {
-        pi_idx.push_back(idx); //error?? '->' changed to '.' (newly added)
-        if (temp == '\n' || temp == '\r')
+   bw = (8 * sizeof(l));
+   printf("Word size of this machine is %hi bits\n", bw);
+
+   // parse the input and output filenames
+   if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {
+      printf("Incorrect input\n");
+      return;
+   }
+   printf("input file name: %s\n", infile1);
+   printf("fault file name: %s\n", infile2);
+   printf("output file name: %s\n", outfile);
+
+   if ((fi = fopen(infile1, "r")) == NULL) {
+      printf("File %s does not exist!\n", infile1);
+      return;
+   }
+   fo = fopen(outfile, "w");
+
+   // read the input indices
+   while (fscanf(fi, "%d%c", &idx, &temp) != EOF) {
+      pi_idx.push_back(idx);
+      if (temp == '\n')
+         break;
+      else if (temp == '\r') {
+         fscanf(fi, "%c", &temp);
+         break;
+      }
+   }
+
+   // for each input pattern
+   while (!feof(fi)) {
+      // load one input pattern
+      while (fscanf(fi, "%d%c", &value, &temp) != EOF) {
+         in_value.push(value);
+         if (temp == '\n')
             break;
-    }
+         else if (temp == '\r') {
+            fscanf(fi, "%c", &temp);
+            break;
+         }
+      }
+      if (feof(fi))
+         break;
+      // open the fault list file
+      if ((ff = fopen(infile2, "r")) == NULL) {
+         printf("File %s does not exist!\n", infile2);
+         return;
+      }
 
-    while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
-        in_value.push(value);
-    }
-    fclose(fd);
+      // for every bw - 1 faults:
+      while (!feof(ff)) {
+         // load faults
+         for (int i = 0; i < bw - 1; i++) {
+            fscanf(ff, "%d@%d", &idx, &fv);
+            if (feof(ff))
+               break;
+            printf("loaded fault #%d: %d@%d\n", i, idx, fv);
+            loaded_faults.push_back(std::make_pair(idx, fv));
+         }
 
-
-    //read DFS output file as input and load each SS@ fault into parallel_fault, newly added
-    std::vector<std::pair<int, int> > parallel_faults;
-    readInputFromOutput(infile2, &parallel_faults);
-    for(i = 0; i < parallel_faults.size(); i++) {
-        cout << "[" <<parallel_faults[i].first << ", "<< parallel_faults[i].second << "]" << endl;
-    }
-
-    //Start reading number of faults
-    std::ifstream file(infile2);
-    // new lines will be skipped unless we stop it from happening:
-    file.unsetf(std::ios_base::skipws);
-    // count the newlines with an algorithm specialized for counting, thus get number of faults
-    unsigned fault_number = std::count(
-            std::istream_iterator<char>(file),
-            std::istream_iterator<char>(),
-            '\n');
-    std::cout << "Lines: " << fault_number << "\n";
-
-    int nloops;
-    nloops = fault_bit_comparison(fault_number, bit_width);
-    printf("Number of words: %d\n", nloops);
-
-    int remaining_faults;
-    remaining_faults = fault_number;
-    std::vector<std::pair<int, int> > fault_load;
-    std::queue<NSTRUC*> qnodes;
-    int p = 0; //delete later
-    for (int i = 0; i < nloops; i++) {
-        // step 1: read 31 or 63 faults from the fault list
-        fault_load = load_faults(parallel_faults, bit_width, remaining_faults);
-        // step 2: initialize the value vectors at the inputs
-        PI_initial(pi_idx, in_value, bit_width, remaining_faults);
-
-        // step 3: simulate all value vectors at each node
-
-        for (i = 0; i < Npi; i++) {
-            Pinput[i]->parallel_value = Pinput[i]->input_initial;
-            for (j = 0; j < Pinput[i]->parallel_value->size(); j++) {
-                printf("input %d has value %d\n", Pinput[i]->num, Pinput[i]->parallel_value->at(j));
-            }
-
-        }
-
-        for (i = 0; i < Npi; i++) {
-            for (j = 0; j < Pinput[i]->fout; j++) {
-                if (Pinput[i]->dnodes[j]->level == 1) {
-                    qnodes.push(Pinput[i]->dnodes[j]);
-                }
-            }
-        }
-
-        //while(!qnodes.empty()) {
-            //printf("Nodes remaining: %d", qnodes.front()->num);
-            //qnodes.pop();
-        //}
-        np = qnodes.front();
-        node_width(np, remaining_faults, bit_width);
-
-        while(!qnodes.empty()) {
+         // initialize the inputs
+         for (int i = 0; i < pi_idx.size(); i++) {
+            for (int j = 0; j < Npi; j++) {
+               if (Pinput[j]->num == pi_idx[i]) {
+                  initialize_pi(Pinput[j], in_value.front());
+                  check_faults(Pinput[j], loaded_faults);
+                  in_value.pop();
+                  for (int k = 0; k < Pinput[j]->fout; k++) {
+                     if (Pinput[j]->dnodes[k]->level == 1)
+                        qnodes.push(Pinput[j]->dnodes[k]);
+                  }
+               }
+            }  
+         }
+         // simulate and propagate
+         while (!qnodes.empty()) {
             np = qnodes.front();
             qnodes.pop();
-
-            //Replacing fault value at corresponding bit of each node
-            fault_replace(fault_load, np);
-            for (i = 0; i < np->parallel_value->size(); i++){
-                printf("Node(after replacing) %d has value %d\n", np->num, np->parallel_value->at(i));
-            }
-
-            printf("hello1\n");
-            //simulate logic
-            sim_parallel(np);
-            printf("hello2\n");
-            k++; //delete later
+            pfs_sim(np);
+            check_faults(np, loaded_faults);
+            // push all children nodes with level + 1 to the qnodes
             for (int i = 0; i < np->fout; i++) {
-                if (np->dnodes[i]->level == (np->level + 1)) {
-                    qnodes.push(np->dnodes[i]);
-                }
+               if (np->dnodes[i]->level == (np->level + 1))
+                  qnodes.push(np->dnodes[i]);
             }
-            printf("loop number %d\n", k);
-        }
-        if (remaining_faults >= bit_width){
-            remaining_faults = remaining_faults - bit_width;
-        }
+         }
+         
+         // report detected faults
+         report_faults(&detected_faults, &loaded_faults);
+      }
 
+      // close the fault list file
+      fclose(ff);
+   }
 
+   // close the input file
+   fclose(fi);
 
-        // step 4: report
-    }
+   // write output file and close it
+   for (std::set<std::pair<int, int> >::iterator it = detected_faults.begin(); it != detected_faults.end(); ++it) {
+      fprintf(fo, "%d@%d\n", (*it).first, (*it).second);
+   }
+   fclose(fo);
+};
 
-    //fault_load = load_faults(parallel_faults, bit_width, remaining_faults);
-    //for(i = 0; i < fault_load.size(); i++) {
-        //cout << "[" <<fault_load[i].first << ", "<< fault_load[i].second << "]" << endl;
-    //}
-    //PI_initial(pi_idx, in_value, bit_width, remaining_faults);
-    //for (i = 0; i < Npi; i++){
-        //for (j = 0; j < Pinput[i]->input_initial->size(); j++) {
-            //cout << "Input"<< pi_idx[i] << "," << Pinput[i]->input_initial[j] << endl;
+void report_faults(std::set<std::pair<int, int> > * detected_faults, std::vector<std::pair<int, int> > * loaded_faults) {
+   int bw = loaded_faults->size();
+   for (int i = 0; i < Npo; i++) {
+      int MSB = (Poutput[i]->parallel_vector >> (bw-1));
+      for (int j = 0; j < bw; j++) {
+         int bj = (Poutput[i]->parallel_vector & (1 << j)) >> j;
+         if (MSB != bj) {
+            detected_faults->insert((*loaded_faults)[j]);
+            // detected_faults->insert(std::make_pair((*loaded_faults)[j]->first, (*loaded_faults)[j]->second));
+         }
+      }
+   }
+}
 
-            //printf("\nInput %d", Pinput[i]->input_initial->at(j));
-        //}
-    //}
+void pfs_sim(NSTRUC * np) {
+   int i;
+   
+   if (np->type == NOT) {
+      np->parallel_vector = ~np->unodes[0]->parallel_vector;
+   }
+   else if (np->type == BRCH) {
+      np->parallel_vector = np->unodes[0]->parallel_vector;
+   }
+   else if (np->type == XOR) {
+      np->parallel_vector = 0;
+      for (i = 0; i < np->fin; i++) {
+         np->parallel_vector ^= np->unodes[i]->parallel_vector;
+      }
+   }
+   else if (np->type == OR) {
+      np->parallel_vector = 0;
+      for (i = 0; i < np->fin; i++) {
+         np->parallel_vector |= np->unodes[i]->parallel_vector;
+      }
+   }
+   else if (np->type == NOR) {
+      np->parallel_vector = 0;
+      for (i = 0; i < np->fin; i++) {
+         np->parallel_vector |= np->unodes[i]->parallel_vector;
+      }
+      np->parallel_vector = ~(np->parallel_vector);
+   }
+   else if (np->type == NAND) {
+      np->parallel_vector = 1;
+      for (i = 0; i < np->fin; i++) {
+         np->parallel_vector &= np->unodes[i]->parallel_vector;
+      }
+      np->parallel_vector = ~(np->parallel_vector);
+   }
+   else if (np->type == AND) {
+      np->parallel_vector = 1;
+      for (i = 0; i < np->fin; i++) {
+         np->parallel_vector &= np->unodes[i]->parallel_vector;
+      }
+   }
+}
 
+void check_faults(NSTRUC * np, std::vector<std::pair<int, int> > loaded_faults) {
+   for (int i = 0; i < loaded_faults.size(); i++) {
+      if (np->num == loaded_faults[i].first) {
+         np->parallel_vector &= ~(1 << i);
+         np->parallel_vector |= (loaded_faults[i].second << i);
+         printf("input %d's vector has been modified: %lu\n", np->num, np->parallel_vector);
+      }
+   }
+}
 
-   // while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
-   //    in_value->push(value);
-   // }
-
-    //fclose(fd);
-
+void initialize_pi(NSTRUC * np, int v) {
+   switch(v) {
+      case 1: np->parallel_vector = ~0; break;
+      case 0: np->parallel_vector = 0; break;
+   }
+   printf("input %d's vector is: %lu\n", np->num, np->parallel_vector);
 }
 
 
+/*-----------------------------------------------------------------------
+input: input test pattern file name, input fault list file name, output file name
+output: nothing
+called by: main
+description:
+  The PFS simulator gets a list of faults and a list of test patterns (one
+  or many) as inputs and reports which one of the faults can be detected
+  with these test patterns using the PFS (single pattern, parallel faults
+  simulation) method.
+-----------------------------------------------------------------------*/
+void rtg(char *cp) {
+   int ntot, ntfcr;
+   char tp_report[MAXLINE], fc_report[MAXLINE];
+   FILE *ftp = NULL, *ffc = NULL;   
+   std::set<std::pair<int, int> > detected_faults;
+   std::queue<int> test_pattern;
+   float fc = 0.0;
+   clock_t start;
+   srand(time(NULL));
+   int r = rand() % 1000;
 
+   // the levelization information is required for simulation
+   lev((char *)(""));
 
+   // parse the input and output filenames
+   if (sscanf(cp, "%d %d %s %s", &ntot, &ntfcr, &tp_report, &fc_report) != 4) {printf("Incorrect input\n"); return;}
+   printf("test pattern report file: %s\n", tp_report);
+   printf("fc report file: %s\n", fc_report);
+   ftp = fopen(tp_report, "w");
+   ffc = fopen(fc_report, "w");
+   
+   // write input indices into test pattern report file
+   for (int i = 0; i < Npi; i++) {
+      if (i == 0)
+         fprintf(ftp, "%d", Pinput[i]->num);
+      else
+         fprintf(ftp, ",%d", Pinput[i]->num);
+   }
+   fprintf(ftp, "\n");
 
+   start = clock();
+   for (int i = 0; i < ntot; i++) {
+      r = rand() % 1000;
+      rtg_single(ftp, &test_pattern, start, r);
+      dfs_single(&test_pattern, &detected_faults);
+      //fc = calculate_fc(fc, &detected_faults);
+      fc = 1.0 * detected_faults.size() / (2 * Nnodes);
+      if ((i + 1) % ntfcr == 0)
+         // report_fc(ffc, fc);
+         fprintf(ffc, "%.2f\n", fc * 100);
+   }
+}
 
+void dfs_single(std::queue<int> * test_pattern, std::set<std::pair<int, int> > * detected_faults) {
+   std::queue<NSTRUC*> qnodes;  
+   NSTRUC* np; 
+
+   reset_fault_list();
+
+   //********** step 1: simulate values of all nodes **********//
+   //********** step 2: create fault list for each node, starting from the PIs **********//
+   // assign values for primary inputs
+   for (int i = 0; i < Npi; i++) {
+      Pinput[i]->value = test_pattern->front();
+      Pinput[i]->fault_list->insert(std::make_pair(Pinput[i]->num, (Pinput[i]->value == 1 ? 0 : 1)));
+      test_pattern->pop();
+   }
+
+      // simulate values of each wires level by level according to their levelization
+      // first push all down nodes of primary inputs which are at level 1
+      // since the values of inputs are already decided, their values can be simulated
+   for (int i = 0; i < Npi; i++) 
+      for (int j = 0; j < Pinput[i]->fout; j++) 
+         if (Pinput[i]->dnodes[j]->level == 1)
+            qnodes.push(Pinput[i]->dnodes[j]);
+
+   while(!qnodes.empty()) {
+      np = qnodes.front();
+      qnodes.pop();
+      sim(np);
+      //********** step 3: propagate fault lists **********//
+      // case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
+      // case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
+      propagate_fault(np);
+      // for each down node, if its level is exactly 1 larger than the current node,
+      // it will be pushed into the queue. Otherwise, it will be pushed into the queue
+      // later, since not all of its inputs' values are decided yet.
+      for (int i = 0; i < np->fout; i++) {
+         if (np->dnodes[i]->level == (np->level + 1))
+            qnodes.push(np->dnodes[i]);
+      }
+   }
+   for (int i = 0; i < Npo; i++) {
+      for (std::set< std::pair<int, int> >::iterator it = Poutput[i]->fault_list->begin(); it != Poutput[i]->fault_list->end(); ++it) {
+         detected_faults->insert(*it);
+      }   
+   }
+}
+
+void rtg_single(FILE * ftp, std::queue<int> * test_pattern, clock_t start, int r) {
+   int v;
+   clock_t end;
+   end = clock();
+   srand((unsigned int)((end - start) / 1000) + r);
+   printf("%d\n", int((end - start)/1000));
+   for (int i = 0; i < Npi; i++) {
+      v = rand() % 2;
+      test_pattern->push(v);
+      if (i == 0) 
+         fprintf(ftp, "%d", v);
+      else
+         fprintf(ftp, ",%d", v);
+   }
+   fprintf(ftp, "\n");
+}
 
 
 // /*======================================================================*/
@@ -824,7 +1004,8 @@ description:
 -----------------------------------------------------------------------*/
 void read_inputs(char *cp, std::vector<int> * pi_idx, std::queue<int> * in_value) {
    FILE *fd;
-   int idx, value;
+   int idx; 
+   char value;
    char temp;
    int i;
    printf("input file name: %s\n", cp);
@@ -834,11 +1015,26 @@ void read_inputs(char *cp, std::vector<int> * pi_idx, std::queue<int> * in_value
    }
    while (fscanf(fd, "%d%c", &idx, &temp) != EOF) {
       pi_idx->push_back(idx);
-      if (temp == '\n' || temp == '\r')
+      if (temp == '\n')
          break;
+      else if (temp == '\r') {
+         fscanf(fd, "%c", &temp);
+         break;
+      }
    }
-   while (fscanf(fd, "%d%c", &value, &temp) != EOF) {
-      in_value->push(value);
+   while (fscanf(fd, "%c%c", &value, &temp) != EOF) {
+      switch (value) {
+         case '1': in_value->push(1); break;
+         case '0': in_value->push(0); break;
+         case 'x':
+         case 'X': in_value->push(-1); break;
+      }
+      if (temp == '\n')
+         continue;
+      else if (temp == '\r') {
+         fscanf(fd, "%c", &temp);
+         continue;
+      }      
    }
    fclose(fd);
 }
@@ -857,7 +1053,11 @@ void sim(NSTRUC *np) {
    if (np->type == NOT) {
       np->value = 0;
       for (i = 0; i < np->fin; i++) {
-         if (np->unodes[i]->value == 0) {
+         if (np->unodes[i]->value == -1) {
+            np->value = -1;
+            break;
+         }
+         else if (np->unodes[i]->value == 0) {
             np->value = 1;
             break;
          }
@@ -866,7 +1066,11 @@ void sim(NSTRUC *np) {
    else if (np->type == BRCH) {
       np->value = 0;
       for (i = 0; i < np->fin; i++) {
-         if (np->unodes[i]->value == 1) {
+         if (np->unodes[i]->value == -1) {
+            np->value = -1;
+            break;
+         }
+         else if (np->unodes[i]->value == 1) {
             np->value = 1;
             break;
          }
@@ -875,7 +1079,11 @@ void sim(NSTRUC *np) {
    else if (np->type == XOR) {
       np->value = 0;
       for (i = 0; i < np->fin; i++) {
-         if (np->unodes[i]->value == 1) {
+         if (np->unodes[i]->value == -1) {
+            np->value = -1;
+            break;
+         }
+         else if (np->unodes[i]->value == 1) {
             np->value = (np->value == 0) ? 1:0;
          }
       }
@@ -887,6 +1095,9 @@ void sim(NSTRUC *np) {
             np->value = 1;
             break;
          }
+         else if (np->unodes[i]->value == -1) {
+            np->value = -1;
+         }
       }
    }
    else if (np->type == NOR) {
@@ -895,6 +1106,9 @@ void sim(NSTRUC *np) {
          if (np->unodes[i]->value == 1) {
             np->value = 0;
             break;
+         }
+         else if (np->unodes[i]->value == -1) {
+            np->value = -1;
          }
       }
    }
@@ -905,6 +1119,9 @@ void sim(NSTRUC *np) {
             np->value = 1;
             break;
          }
+         else if (np->unodes[i]->value == -1) {
+            np->value = -1;
+         }
       }
    }
    else if (np->type == AND) {
@@ -913,6 +1130,9 @@ void sim(NSTRUC *np) {
          if (np->unodes[i]->value == 0) {
             np->value = 0;
             break;
+         }
+         else if (np->unodes[i]->value == -1) {
+            np->value = -1;
          }
       }
    }
@@ -926,6 +1146,12 @@ called by: dfs
 description:
   Propagate fault list.
 -----------------------------------------------------------------------*/
+
+// step 3: fault propagation
+//    case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
+//    case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
+
+
 void propagate_fault(NSTRUC *np) {
    std::vector<NSTRUC *> cinputs;    // inputs with controlling values
    std::set<std::pair<int, int> > cinput_faults;    // faults shared by all fault lists of controlling inputs
@@ -957,6 +1183,30 @@ void propagate_fault(NSTRUC *np) {
             }
          }
       }
+   }
+   else if (np->type == XOR) {
+      std::set<std::pair<int, int> > odd_faults;
+      std::set<std::pair<int, int> > even_faults;
+      for (int i = 0; i < np->fin; i++) {
+         for (std::set< std::pair<int, int> >::iterator it = np->unodes[i]->fault_list->begin(); it != np->unodes[i]->fault_list->end(); ++it) {
+            if (even_faults.find(*it) != even_faults.end()) {
+               odd_faults.insert(*it);
+               even_faults.erase(*it);
+            }
+            else if (odd_faults.find(*it) != odd_faults.end()){
+               even_faults.insert(*it);
+               odd_faults.erase(*it);
+            }
+            else {
+               odd_faults.insert(*it);
+            }
+         }
+      }
+      np->fault_list->insert(std::make_pair(np->num, (np->value == 1 ? 0 : 1)));
+      for (std::set< std::pair<int, int> >::iterator it = odd_faults.begin(); it != odd_faults.end(); ++it) {
+            np->fault_list->insert(*it);         
+      }
+      return;
    }
 
    np->fault_list->insert(std::make_pair(np->num, (np->value == 1 ? 0 : 1)));
@@ -993,7 +1243,7 @@ description:
 -----------------------------------------------------------------------*/
 void reset_fault_list() {
    for (int i = 0; i < Nnodes; i++) {
-      delete(Node[i].fault_list);
+      //delete(Node[i].fault_list);
       Node[i].fault_list = new(std::set<std::pair<int, int> >);
    }
 }
@@ -1018,293 +1268,4 @@ int fault_bit_comparison(int fault_n, int bit_width){
     return number_words ;
 }
 
-/*-----------------------------------------------------------------------
-input: nothing
-output: nothing
-called by: pfs
-description:
-  load faults into corresponding bit position
------------------------------------------------------------------------*/
-vector<pair<int, int> > load_faults(vector<std::pair<int, int> > parallel_faults, int bit_width, int remaining_faults){
-    vector<pair<int, int> > fault_load;
-    int i;
-    if (remaining_faults >= bit_width) {
-        for (i = 0; i < bit_width; i++) {
-            fault_load.push_back(parallel_faults[i]);
-        }
-    }
-    else if (remaining_faults < bit_width){
-        for (i = 0; i < remaining_faults; i++) {
-            fault_load.push_back(parallel_faults[i]);
-        }
-    }
-    return fault_load;
-}
-
-/*-----------------------------------------------------------------------
-input: nothing
-output: nothing
-called by: pfs
-description:
-  initialize the value vectors at the inputs
------------------------------------------------------------------------*/
-void PI_initial(vector<int> pi_idx, queue<int> in_value, int bit_width, int remaining_faults){
-    //NSTRUC *np;
-    int i, j, k;
-
-    for (i = 0; i < pi_idx.size(); i++) {
-        for (j = 0; j < Npi; j++) {
-            if (Pinput[j]->num == pi_idx[i]) {
-                Pinput[j]->input_initial = new(std::vector<int>);
-
-                if (remaining_faults >= bit_width) {
-                    for (k = 0; k < bit_width; k++) {
-                        Pinput[j]->input_initial->push_back(in_value.front());
-                    }
-
-                } else {
-                    for (k = 0; k < remaining_faults; k++) {
-                        Pinput[j]->input_initial->push_back(in_value.front());
-                    }
-                }
-                //cout << in_value.front() << endl;
-                in_value.pop();
-            }
-        }
-    }
-}
-/*-----------------------------------------------------------------------
-input: nothing
-output: nothing
-called by: pfs
-description:
-  read DFS output file as input and load each SS@ fault into parallel_fault
------------------------------------------------------------------------*/
-void readInputFromOutput(char *filename, std::vector<std::pair<int, int> > *parallel_fault){
-    FILE *fd;
-    int idx, temp;
-    if ((fd = fopen(filename, "r")) == NULL) {
-        printf("File %s does not exist!\n", filename);
-        return;
-    }
-    while (fscanf(fd, "%d@%d", &idx, &temp) != EOF) {
-        pair<int, int> subvec (idx, temp);
-        parallel_fault->push_back(subvec);
-    }
-}
-
-/*-----------------------------------------------------------------------
-input: node
-output: nothing
-called by: main
-description:
-  Simulate the value of the given node in parallel
------------------------------------------------------------------------*/
-void sim_parallel(NSTRUC *np) {
-    int i, j, k;
-    NSTRUC *input;
-    printf("hello3\n");
-    if (np->type == NOT) {
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 0;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 0)){
-                        np->parallel_value->at(j) = 1;
-                        break;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 0) {
-                    np->parallel_value->at(j) = 1;
-                    break;
-                }
-            }
-        }
-    }
-    else if (np->type == BRCH) {
-        printf("hello4\n");
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 0;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
-                        np->parallel_value->at(j) = 1;
-                        break;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 1) {
-                    np->parallel_value->at(j) = 1;
-                    break;
-                }
-            }
-        }
-        printf("hello5\n");
-    }
-    else if (np->type == XOR) {
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 0;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
-                        np->parallel_value->at(j) = (np->parallel_value->at(j) == 0) ? 1 : 0;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 1) {
-                    np->parallel_value->at(j) = (np->parallel_value->at(j) == 0) ? 1 : 0;
-                }
-            }
-        }
-    }
-    else if (np->type == OR) {
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 0;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
-                        np->parallel_value->at(j) = 1;
-                        break;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 1) {
-                    np->parallel_value->at(j) = 1;
-                    break;
-                }
-            }
-        }
-    }
-    else if (np->type == NOR) {
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 1;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 1)){
-                        np->parallel_value->at(j) = 0;
-                        break;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 1) {
-                    np->parallel_value->at(j) = 0;
-                    break;
-                }
-            }
-        }
-    }
-    else if (np->type == NAND) {
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 0;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 0)){
-                        np->parallel_value->at(j) = 1;
-                        break;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 0) {
-                    np->parallel_value->at(j) = 1;
-                    break;
-                }
-            }
-        }
-    }
-    else if (np->type == AND) {
-        //np->parallel_value = new(std::vector<int>);
-        for (j = 0; j < (np->parallel_value)->size(); j++) {
-            np->parallel_value->at(j) = 1;
-            for (i = 0; i < np->fin; i++) {
-                for (k = 0; k < Npi; k++){
-                    if ((np->unodes[i]->num == Pinput[k]->num) && (np->unodes[i]->input_initial->at(j) == 0)){
-                        np->parallel_value->at(j) = 0;
-                        break;
-                    }
-                }
-                if (np->unodes[i]->parallel_value->at(j) == 0) {
-                    np->parallel_value->at(j) = 0;
-                    break;
-                }
-            }
-        }
-    }
-    printf("hello6\n");
-    for (i = 0; i < (np->parallel_value)->size(); i++){
-        printf("node %d has type: %d value: %d level: %d\n", np->num, np->type, np->parallel_value->at(i), np->level);
-    }
-}
-/*-----------------------------------------------------------------------
-input: node
-output: nothing
-called by: main
-description:
-  Initializing parallel width of each node
------------------------------------------------------------------------*/
-void node_width(NSTRUC *np, int remaining_faults, int bit_width){
-    int i, j, k, p = 0,h = 0;
-    if (remaining_faults >= bit_width){
-        for (i = 0; i < Nnodes; i++){
-            np = &Node[i];
-            np->parallel_value = new(std::vector<int>);
-            h = 0;
-            for (k = 0; k < Npi; k++){
-                if (np->num == Pinput[k]->num){
-                    h = 1;
-                    break;
-                }
-            }
-            if (h == 1) {
-                continue;
-            }
-            else{
-                for (j = 0; j < bit_width; j++) {
-                    (np->parallel_value)->push_back(0);
-                    p++; //delete later
-                    printf("#%d Node %d has value %d and size %d\n", p, np->num, np->parallel_value->at(j), np->parallel_value->size());
-                }
-            }
-        }
-    }
-    else{
-        for (i = 0; i < Nnodes; i++){
-            np = &Node[i];
-            np->parallel_value = new(std::vector<int>);
-            h = 0;
-            for (k = 0; k < Npi; k++){
-                if (np->num == Pinput[k]->num){
-                    h = 1;
-                    break;
-                }
-            }
-            if (h == 1) {
-                continue;
-            }
-            else{
-                for (j = 0; j < remaining_faults; j++) {
-                    (np->parallel_value)->push_back(0);
-                    p++; //delete later
-                    printf("#%d Node %d has value %d and size %d\n", p, np->num, np->parallel_value->at(j), np->parallel_value->size());
-                }
-            }
-        }
-    }
-
-}
-/*-----------------------------------------------------------------------
-input: node
-output: nothing
-called by: main
-description:
-  Replacing fault value at corresponding bit of each node
------------------------------------------------------------------------*/
-void fault_replace (vector<pair<int, int> >fault_load, NSTRUC *np){
-    int i;
-    for (i = 0; i < fault_load.size(); i++){
-        if (np->num == fault_load[i].first){
-            np->parallel_value->at(i) = fault_load[i].second;
-        }
-    }
-}
 /*========================= End of program ============================*/

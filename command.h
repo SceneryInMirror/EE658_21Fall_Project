@@ -1,11 +1,13 @@
 #ifndef COMMAND_H
 #define COMMAND_H
 
+#include <stdio.h>
 #include <ctype.h>
 #include <queue>
 #include <vector>
 #include <set>
 #include <utility>
+#include <time.h>
 
 
 #define MAXLINE 81               /* Input buffer size */
@@ -15,7 +17,7 @@
 #define Lowcase(x) ((isalpha(x) && isupper(x))? tolower(x) : (x))
 
 /*-------------------- Command Definitions --------------------*/
-enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL, DFS, PFS};        /* command list */
+enum e_com {READ, PC, HELP, QUIT, LEV, LOGICSIM, RFL, DFS, PFS, RTG};        /* command list */
 enum e_state {EXEC, CKTLD};         /* Gstate values */
 enum e_ntype {GATE, PI, FB, PO};    /* column 1 of circuit format */
 enum e_gtype {IPT, BRCH, XOR, OR, NOR, NOT, NAND, AND};  /* gate types */
@@ -37,16 +39,21 @@ typedef struct n_struc {
    int level;                 /* level of the gate output */
    int value;                 /* value of the gate output */
    std::set<std::pair<int, int> > *fault_list;    /* fault list */
-   std::vector<int> *input_initial; /*primary input initialization*/
-   std::vector<int> *parallel_value; /*parallel values of each node*/
+   unsigned long parallel_vector;      /* used for pfs to store the values for each fault circuit, the MSB is for the good circuit */
+
 } NSTRUC;                     
 
-#define NUMFUNCS 9
-void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *), dfs(char *), pfs(char *);
-void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *), sim_parallel(NSTRUC *), propagate_fault(NSTRUC *), reset_fault_list(), PI_initial(std::vector<int>, std:: queue<int>, int, int), readInputFromOutput(char*, std::vector<std::pair<int, int> >*);
-void node_width(NSTRUC *, int, int), fault_replace (std::vector<std::pair<int, int> >fault_load, NSTRUC *);
+#define NUMFUNCS 10
+void cread(char *), pc(char *), help(char *), quit(char *), lev(char *), logicsim(char *), rfl(char *), dfs(char *), pfs(char *), rtg(char *);
+void read_cktname(char *), clear(), allocate(), read_inputs(char *, std::vector<int> *, std::queue<int> *), sim(NSTRUC *), propagate_fault(NSTRUC *), reset_fault_list();
 int fault_bit_comparison(int, int);
-std:: vector<std::pair<int, int> > load_faults(std::vector<std::pair<int, int> >, int, int);
+void dfs_single(std::queue<int> *, std::set<std::pair<int, int> > *);
+void rtg_single(FILE *, std::queue<int> *, clock_t, int);
+void initialize_pi(NSTRUC*, int);
+void check_faults(NSTRUC *, std::vector<std::pair<int, int> >);
+void pfs_sim(NSTRUC *);
+void report_faults(std::set<std::pair<int, int> > *, std::vector<std::pair<int, int> > *);
+
 
 extern struct cmdstruc command[NUMFUNCS];
 
