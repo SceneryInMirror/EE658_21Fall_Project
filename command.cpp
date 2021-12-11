@@ -57,6 +57,10 @@ struct cmdstruc command[NUMFUNCS] = {
    {"DFS", dfs, CKTLD},
    {"PFS", pfs, CKTLD},
    {"RTG", rtg, CKTLD},
+   {"DALG", dalg, CKTLD}, 
+   {"PODEM", podem, CKTLD}, 
+   {"ATPG_DET", atpg_det, EXEC},
+   {"ATPG", atpg, EXEC},
 };
 
 enum e_state Gstate = EXEC;
@@ -70,7 +74,16 @@ int Npi;                        /* number of primary inputs */
 int Npo;                        /* number of primary outputs */
 int Done = 0;                   /* status bit to terminate program */
 char Cktname[MAXLINE];          /* circuit name */
+NSTRUC **map_num_node;
+struct n_struc *starting_node;
+int *map_indx_num;
+char netlist_file_name[81];
+int atpg_flag = 0;  //flag from atpg function calls   Zeming
 
+std::vector<int> input_test_vector_node;      //Zeming
+std::vector<int> input_test_vector_value;     //Zeming
+std::vector<int> fault_dic;                   //2*n fault, 0 = invalid, 1 = valid  Zeming
+std::vector<int> fault_dic_node;              //Zeming for dfs store the node number
 
 //int cread(){}；
 //void pc(char *){};
@@ -97,7 +110,7 @@ description:
   set up the circuit information. These procedures may be simplified in
   the future.
 -----------------------------------------------------------------------*/
-void cread(char *cp) {
+int cread(char *cp) {
    char buf[MAXLINE];
    /*------------------
     * tp: type, nd: id 
@@ -110,13 +123,13 @@ void cread(char *cp) {
    sscanf(cp, "%s", buf);
    if((fd = fopen(buf,"r")) == NULL) {
       printf("File %s does not exist!\n", buf);
-      return;
+      return 0;
    }
 
    /* read circuit name */
    read_cktname(buf);
 
-   if(Gstate >= CKTLD) clear();
+   if(Gstate >= CKTLD) clear_mem();
    Nnodes = Ngates = Npi = Npo = ntbl = 0;
    while(fgets(buf, MAXLINE, fd) != NULL) {
       if(sscanf(buf,"%d %d", &tp, &nd) == 2) {
@@ -177,6 +190,7 @@ void cread(char *cp) {
    fclose(fd);
    Gstate = CKTLD;
    printf("==> OK\n");
+   return 0;
 }
 
 /*-----------------------------------------------------------------------
@@ -186,7 +200,7 @@ called by: main
 description:
   The routine prints out the circuit description from previous READ command.
 -----------------------------------------------------------------------*/
-void pc(char *cp) {
+int pc(char *cp) {
    int i, j;
    NSTRUC *np;
    char *gname(int);
@@ -210,6 +224,7 @@ void pc(char *cp) {
    printf("Number of nodes = %d\n", Nnodes);
    printf("Number of primary inputs = %d\n", Npi);
    printf("Number of primary outputs = %d\n", Npo);
+   return 0;
 }
 
 /*-----------------------------------------------------------------------
@@ -219,7 +234,7 @@ called by: main
 description:
   The routine prints ot help inormation for each command.
 -----------------------------------------------------------------------*/
-void help(char *cp) {
+int help(char *cp) {
    printf("READ filename - ");
    printf("read in circuit file and creat all data structures\n");
    printf("PC - ");
@@ -240,6 +255,7 @@ void help(char *cp) {
    printf("print this help information\n");
    printf("QUIT - ");
    printf("stop and exit\n");
+   return 0;
 }
 
 /*-----------------------------------------------------------------------
@@ -249,8 +265,9 @@ called by: main
 description:
   Set Done to 1 which will terminates the program.
 -----------------------------------------------------------------------*/
-void quit(char *cp) {
+int quit(char *cp) {
    Done = 1;
+   return 0;
 }
 
 /*-----------------------------------------------------------------------
@@ -264,72 +281,199 @@ description:
   If the command is used as "lev [filename]", the output will be
   written into [filename].
 -----------------------------------------------------------------------*/
-void lev(char *cp) {
-   char buf[MAXLINE];
-   int i = 0, j = 0;
-   std::queue<NSTRUC*> qnodes;
-   NSTRUC *np;
-   int maxUpLevel;
-   char txtname[MAXLINE];
-   FILE *fp = NULL;
+int lev(char *cp)
+{
+    int ind;
+    FILE* lev_report;
+    // char *report_name = new char;
+    char report_name[20];
+    for (ind = 0; ind < 20; ind++){
+      report_name[ind] = netlist_file_name[ind];
+    }
+    // report_name = netlist_file_name;
+    strcat(report_name, "_level.txt");
+    if (!atpg_flag)
+    {
+      lev_report = fopen(report_name, "w");
+    }
+    
+    NSTRUC *np, *ipt_np, *opt_np;
+    int fault_ind;
+    for (ind = 0; ind < Nnodes; ind++)  // Initialization
+    {
+        np = &Node[ind];
+        np->level = -1;
+        np->next_node = NULL;
+        np->fin_level = np->fin;  // This parameter is only useful to levelization
+    }
 
-   // if the command is given as "lev",
-   // parse the default file name
-   strcpy(txtname, Cktname);
-   strcat(txtname, ".txt");
-   fp = fopen(txtname, "w");
+    int head_count = 0, tail_count = 0, ind_dnode, ind_unode, max_level;
+    NSTRUC ** unleveled;
+    unleveled = (NSTRUC **) malloc(Nnodes * sizeof(NSTRUC *));
+    int max_num = 0;
+    for (ind = 0; ind < Npi; ind++)  // Include all PI nodes to the unleveled array.
+    {
+        if (ind == 0){
+            starting_node = Pinput[ind];
+        }
+        np = Pinput[ind];
+        unleveled[tail_count++] = np;
+    }
+    while (head_count < tail_count)
+    {
+        np = unleveled[head_count++];
+        if (np->num > max_num){
+          max_num = np->num;
+        }
+        if (np->level == -1)
+        {
+            for (ind_dnode = 0; ind_dnode < np->fout; ind_dnode++)  // Include unleveled nodes from their fan-out nodes to the array.
+            {
+                opt_np = np->dnodes[ind_dnode];
+                opt_np->fin_level -= 1;
+                if (opt_np->fin_level == 0)
+                {
+                    unleveled[tail_count++] = opt_np;
+                }
+            }
+            if (np->type == IPT) {np->level = 0;}  // PI node has level 0.
+            else if (np->type == BRCH)  // Branch
+            {
+                ipt_np = np->unodes[0];
+                np->level = ipt_np->level + 1;
+            }
+            else
+            {
+                max_level = 0;
+                for (ind_unode = 0; ind_unode < np->fin; ind_unode++)
+                {
+                    ipt_np = np->unodes[ind_unode];
+                    if (max_level < ipt_np->level) {max_level = ipt_np->level;}
+                }
+                np->level = max_level + 1;
+            }
+        }
+        // printf("%d,%d\n", np->num, np->level);
+        if (head_count < tail_count){
+            np->next_node = unleveled[head_count];
+            // printf("%d %d \n", np->num, np->next_node->num);
+        }
+        if (!atpg_flag)
+        {
+          fprintf(lev_report, "%d,%d\n", np->num, np->level);
+        }
+        
+    }
+    if (!atpg_flag)
+    {
+      fclose(lev_report);
+    }
+    
 
-   // if the command is given as "lev [output file name]",
-   // the output file name will be loaded with read_cktname()
-   if (sscanf(cp, "%s", buf) == 1) read_cktname(buf);
-   
-   Ngates = 0;
-   printf("%s\n", Cktname);
-   printf("#PI: %d\n", Npi);
-   printf("#PO: %d\n", Npo);
-   printf("#Nodes: %d\n", Nnodes);
-   
-   for (i = 0; i < Nnodes; i++)
-      if (Node[i].type >= XOR && Node[i].type <= AND) Ngates++;
-   printf("#Gates: %d\n", Ngates);
-   
-   fprintf(fp, "%s\n", Cktname);
-   fprintf(fp, "#PI: %d\n", Npi);
-   fprintf(fp, "#PO: %d\n", Npo);
-   fprintf(fp, "#Nodes: %d\n", Nnodes);
-   fprintf(fp, "#Gates: %d\n", Ngates);
-   
-   // front = (Qnode *) malloc(sizeof(Qnode));
-   // front->next = NULL;
-   // rear = front;
-   for (i = 0; i < Nnodes; i++) Node[i].level = -1;
-   for (i = 0; i < Npi; i++) {
-      Pinput[i]->level = 0;
-      for (j = 0; j < Pinput[i]->fout; j++) {
-         qnodes.push(Pinput[i]->dnodes[j]);
+    // Create a map from num to node
+    map_num_node = new NSTRUC* [max_num + 1];
+    map_indx_num = new int[Nnodes];
+    struct n_struc *current_node;
+    current_node = starting_node;
+    while(1){
+      map_num_node[current_node->num] = current_node;
+      map_indx_num[current_node->indx] = current_node->num;
+      if (current_node->next_node == NULL){
+        break;
       }
-   }
-   while(!qnodes.empty()) {
-      np = qnodes.front();
-      qnodes.pop();
-      maxUpLevel = 0;
-      for (i = 0; i < np->fin; i++) {
-         if (np->unodes[i]->level == -1) { maxUpLevel = -1; break; }
-         if (np->unodes[i]->level > maxUpLevel) maxUpLevel = np->unodes[i]->level;
-      }
-      if (maxUpLevel == -1) continue;
-      np->level = maxUpLevel + 1;
-      for (i = 0; i < np->fout; i++) { 
-         if (np->dnodes[i]->level > 0) continue;
-         qnodes.push(np->dnodes[i]);
-      }
-   }
-   for (i = 0; i < Nnodes; i++) {
-      printf("%d %d\n", Node[i].num, Node[i].level);
-      fprintf(fp, "%d %d\n", Node[i].num, Node[i].level);
-   }
-   fclose(fp);
+      current_node = current_node->next_node;
+    }
+    if (!atpg_flag){
+      printf("Levelization=> OK\n");
+    }
+    return 0;
 }
+// int lev(char *cp) {
+//    char buf[MAXLINE];
+//    int i = 0, j = 0;
+//    std::queue<NSTRUC*> qnodes;
+//    NSTRUC *np;
+//    int maxUpLevel, maxNum = 0;
+//    char txtname[MAXLINE];
+//    FILE *fp = NULL;
+
+//    // if the command is given as "lev",
+//    // parse the default file name
+//    strcpy(txtname, Cktname);
+//    strcat(txtname, ".txt");
+//    fp = fopen(txtname, "w");
+
+//    // if the command is given as "lev [output file name]",
+//    // the output file name will be loaded with read_cktname()
+//    if (sscanf(cp, "%s", buf) == 1) read_cktname(buf);
+   
+//    Ngates = 0;
+//    printf("%s\n", Cktname);
+//    printf("#PI: %d\n", Npi);
+//    printf("#PO: %d\n", Npo);
+//    printf("#Nodes: %d\n", Nnodes);
+   
+//    for (i = 0; i < Nnodes; i++)
+//       if (Node[i].type >= XOR && Node[i].type <= AND) Ngates++;
+//    printf("#Gates: %d\n", Ngates);
+   
+//    fprintf(fp, "%s\n", Cktname);
+//    fprintf(fp, "#PI: %d\n", Npi);
+//    fprintf(fp, "#PO: %d\n", Npo);
+//    fprintf(fp, "#Nodes: %d\n", Nnodes);
+//    fprintf(fp, "#Gates: %d\n", Ngates);
+   
+//    // front = (Qnode *) malloc(sizeof(Qnode));
+//    // front->next = NULL;
+//    // rear = front;
+//    for (i = 0; i < Nnodes; i++) Node[i].level = -1;
+//    for (i = 0; i < Npi; i++) {
+//       Pinput[i]->level = 0;
+//       if (i > 0) Pinput[i - 1]->next_node = Pinput[i];
+//       for (j = 0; j < Pinput[i]->fout; j++) {
+//          qnodes.push(Pinput[i]->dnodes[j]);
+//       }
+//    }
+//    Pinput[Npi - 1]->next_node = qnodes.front();
+//    while(!qnodes.empty()) {
+//       np = qnodes.front();
+//       qnodes.pop();
+//       if (!qnodes.empty())
+//          np->next_node = qnodes.front();
+//       else 
+//          np->next_node = NULL;
+//       maxUpLevel = 0;
+//       for (i = 0; i < np->fin; i++) {
+//          if (np->unodes[i]->level == -1) { maxUpLevel = -1; break; }
+//          if (np->unodes[i]->level > maxUpLevel) maxUpLevel = np->unodes[i]->level;
+//       }
+//       if (maxUpLevel == -1) continue;
+//       np->level = maxUpLevel + 1;
+//       for (i = 0; i < np->fout; i++) { 
+//          if (np->dnodes[i]->level > 0) continue;
+//          qnodes.push(np->dnodes[i]);
+//       }
+//    }
+//    for (i = 0; i < Nnodes; i++) {
+//       printf("%d %d\n", Node[i].num, Node[i].level);
+//       fprintf(fp, "%d %d\n", Node[i].num, Node[i].level);
+//    }
+
+//    for (int i = 0; i < Nnodes; i++)
+//       if (Node[i].num > maxNum) maxNum = Node[i].num;
+//    starting_node = Pinput[0];
+//    map_indx_num = new int[Nnodes];
+//    map_num_node = new NSTRUC* [maxNum + 1];
+//    struct n_struc *current_node;
+//    current_node = starting_node;
+//    for (int i = 0; i < Nnodes; i++) {
+//       map_indx_num[current_node->indx] = current_node->num;
+//       map_num_node[Node[i].num] = &Node[i];
+//    }
+
+//    fclose(fp);
+//    return 0;
+// }
 
 /*-----------------------------------------------------------------------
 input: input file name, output file name
@@ -342,7 +486,7 @@ description:
   It will read the values of inputs from [input file name] and 
   write the values of outputs into [output file name].
 -----------------------------------------------------------------------*/
-void logicsim(char *cp) {
+int logicsim(char *cp) {
    char infile[MAXLINE], outfile[MAXLINE];
    std::queue<NSTRUC*> qnodes;
    std::vector<int> pi_idx;
@@ -356,7 +500,7 @@ void logicsim(char *cp) {
    lev((char *)(""));
 
    // parse the input and output filenames
-   if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
+   if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return 0;}
    printf("input file name: %s\n", infile);
    printf("output file name: %s\n", outfile);
    fp = fopen(outfile, "w");
@@ -433,6 +577,7 @@ void logicsim(char *cp) {
 
    // write into [output file name]
    fclose(fp);
+   return 0;
 }
 
 /*-----------------------------------------------------------------------
@@ -444,7 +589,7 @@ description:
   In this function we only consider the check point theorem as a method 
   to reduce the number of faults.
 -----------------------------------------------------------------------*/
-void rfl(char *cp) {
+int rfl(char *cp) {
    std::set<NSTRUC*> pi_branch;
    std::set<NSTRUC*>::iterator it;
    FILE *fp = NULL;
@@ -463,7 +608,7 @@ void rfl(char *cp) {
    }
 
    // parse the output filename
-   if (sscanf(cp, "%s", &outfile) != 1) {printf("Incorrect input\n"); return;}
+   if (sscanf(cp, "%s", &outfile) != 1) {printf("Incorrect input\n"); return 0;}
    printf("%s\n", outfile);
    fp = fopen(outfile, "w");
 
@@ -472,6 +617,7 @@ void rfl(char *cp) {
       fprintf(fp, "%d@1\n", (*it)->num);
    }
    fclose(fp);
+   return 0;
 }
 
 /*-----------------------------------------------------------------------
@@ -491,90 +637,549 @@ description:
 //    case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
 // step 4: print all detectable faults at the outputs    
 
-void dfs(char *cp) {
-   char infile[MAXLINE], outfile[MAXLINE];
-   FILE *fp = NULL;
-   std::queue<NSTRUC*> qnodes;
-   std::vector<int> pi_idx;
-   std::queue<int> in_value;
-   std::set<std::pair<int, int> > detectable_faults;
-   NSTRUC *np;
-   int level_idx = 1;
-
-   // the levelization information is required for simulation
-   lev((char *)(""));
-
-   // parse the input and output filenames
-   if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return;}
-   printf("%s\n", infile);
-   printf("%s\n", outfile);
-   fp = fopen(outfile, "w");
-
-   // read inputs
-   read_inputs(infile, &pi_idx, &in_value);
-
-   int loop = in_value.size() / pi_idx.size(); // loop is the number of input patterns
-
-   for (int l = 0; l < loop; l++) { // simulate for each input
-
-      reset_fault_list();
-
-      //********** step 1: simulate values of all nodes **********//
-      //********** step 2: create fault list for each node, starting from the PIs **********//
-      // assign primary input values
-      for (int i = 0; i < pi_idx.size(); i++) {
-         for (int j = 0; j < Npi; j++) {
-            if (Pinput[j]->num == pi_idx[i]) {
-               Pinput[j]->value = in_value.front();
-               Pinput[j]->fault_list->insert(std::make_pair(Pinput[j]->num, (Pinput[j]->value == 1 ? 0 : 1)));
-               printf("input %d has value %d\n", Pinput[j]->num, Pinput[j]->value);
-               in_value.pop();
-               break;
+int dfs(char *cp)
+{
+  int i, j;
+  char sim_input_name[20];
+  char fault_output_name[20];
+  FILE *sim_input;
+  int input[MAXLINE];
+  int value[MAXLINE];
+  sscanf(cp, "%s %s", sim_input_name, fault_output_name);
+  sim_input = fopen(sim_input_name,"r");
+  // Get the input values from file
+  if (atpg_flag == 1)   //if from ATPG, Zeming
+  {
+    for (int i = 0; i < Npi; i++)
+    {
+      input[i] = input_test_vector_node[i];
+      value[i] = input_test_vector_value[i];
+      input_test_vector_value.pop_back();     //pop out the vector for next vector initiate
+    }
+    //printf("atpg_flag = 1");
+  }
+  else  //not from ATPG     Zeming
+  {
+    for (i = 0; i < Npi; i ++){
+      if(fscanf(sim_input,"%d,%d", &input[i], &value[i]) == 2){
+        printf("%d, %d\n",input[i],value[i]);
+      }
+    }
+    //printf("atpg_flag = 0");
+  }
+  // Create mapping from indx to num
+  // int* map_indx_num = new int[Nnodes]; // REMINDER to delete
+  // First step: simulate the whole logic
+  int temp_value;
+  struct n_struc *current_node;
+  current_node = starting_node;
+  while (1){
+    // map_indx_num[current_node->indx] = current_node->num; // REMINDER to delete
+    switch (current_node->type){ // enum e_gtype {IPT, BRCH, XOR, OR, NOR, NOT, NAND, AND}; 
+      case IPT:{  // Get input value from txt file
+        for (j = 0; j < Npi; j++){
+          if (input[j] == current_node->num){
+            break;
+          }
+        }
+        current_node->value = value[j];
+        break;
+      }
+      case BRCH:{
+        current_node->value = current_node->unodes[0]->value;
+        break;
+      }
+      case XOR:{
+        for (i = 0; i < current_node->fin; i++){
+          if (i == 0){
+            temp_value = current_node->unodes[i]->value;
+          }
+          else{
+            temp_value = temp_value ^ (current_node->unodes[i]->value);
+          }
+        }
+        current_node->value = temp_value;
+        break;
+      }
+      case OR:{
+        for (i = 0; i < current_node->fin; i++){
+          if (i == 0){
+            temp_value = current_node->unodes[i]->value;
+          }
+          else{
+            temp_value = temp_value || (current_node->unodes[i]->value);
+          }
+        }
+        current_node->value = temp_value;
+        break;
+      }
+      case NOR:{
+        for (i = 0; i < current_node->fin; i++){
+          if (i == 0){
+            temp_value = current_node->unodes[i]->value;
+          }
+          else{
+            temp_value = temp_value || (current_node->unodes[i]->value);
+          }
+        }
+        current_node->value = !temp_value;
+        break;
+      }
+      case NOT:{
+        current_node ->value = !(current_node->unodes[0]->value);
+        break;
+      }
+      case NAND:{
+        for (i = 0; i < current_node->fin; i++){
+          if (i == 0){
+            temp_value = current_node->unodes[i]->value;
+          }
+          else{
+            temp_value = temp_value && (current_node->unodes[i]->value);
+          }
+        }
+        current_node->value = !temp_value;
+        break;
+      }
+      case AND:{
+        for (i = 0; i < current_node->fin; i++){
+          if (i == 0){
+            temp_value = current_node->unodes[i]->value;
+          }
+          else{
+            temp_value = temp_value && (current_node->unodes[i]->value);
+          }
+        }
+        current_node->value = temp_value;
+        break;
+      }
+      default:;
+    }
+    if (current_node->next_node == NULL){
+      break;
+    }
+    current_node = current_node->next_node;
+  }
+  // Second step: Create the empty list for each node. 
+  int fault_ind, fault_ind2;
+  int** fault_list_valid = new int*[Nnodes];
+  for (fault_ind = 0; fault_ind < Nnodes; fault_ind++){
+    fault_list_valid[fault_ind] = new int[2 * Nnodes]; // NOTE: Even index is sa1, while odd index is sa0
+  }
+  for (fault_ind = 0; fault_ind < Nnodes; fault_ind++){
+    for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+      fault_list_valid[fault_ind][fault_ind2] = 0;
+    }
+  }
+  // Thrid: Start the deductive fault analysis. 
+  current_node = starting_node;
+  while (1){
+    // printf("Idx: %d Num: %d\n", current_node->indx, current_node->num);
+    switch (current_node->type){ // enum e_gtype {IPT, BRCH, XOR, OR, NOR, NOT, NAND, AND}; 
+      case IPT:{
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
+      }
+      case BRCH:{
+        for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+          fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+        }
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
+      }
+      case XOR:{
+        for (i = 0; i < current_node->fin; i++){
+          if (i == 0){
+            for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+              // if (current_node->unodes[i]->value){
+              fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+              // }
             }
-         }
+          }
+          else{
+            for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+              // if (current_node->unodes[i]->value){
+              fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] ^ fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+              // }
+            }
+          }
+        }
+        // Add the fault of the wire itself
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
       }
-
-      // simulate values of each wires level by level according to their levelization
-      // first push all down nodes of primary inputs which are at level 1
-      // since the values of inputs are already decided, their values can be simulated
-      for (int i = 0; i < Npi; i++) 
-         for (int j = 0; j < Pinput[i]->fout; j++) 
-            if (Pinput[i]->dnodes[j]->level == 1)
-               qnodes.push(Pinput[i]->dnodes[j]);
-
-      while(!qnodes.empty()) {
-         np = qnodes.front();
-         qnodes.pop();
-         sim(np);
-         //********** step 3: propagate fault lists **********//
-         // case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
-         // case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
-         propagate_fault(np);
-         // for each down node, if its level is exactly 1 larger than the current node,
-         // it will be pushed into the queue. Otherwise, it will be pushed into the queue
-         // later, since not all of its inputs' values are decided yet.
-         for (int i = 0; i < np->fout; i++) {
-            if (np->dnodes[i]->level == (np->level + 1))
-               qnodes.push(np->dnodes[i]);
-         }
+      case OR:{
+        if (current_node->value == 0){ // Add the union of the previous faults
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value==0){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+                }
+            }
+              else{ 
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value==0){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] || fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+                }
+              }
+          }
       }
-      for (int i = 0; i < Npo; i++) {
-         for (std::set< std::pair<int, int> >::iterator it = Poutput[i]->fault_list->begin(); it != Poutput[i]->fault_list->end(); ++it) {
-            detectable_faults.insert(*it);
-         }   
+        else{
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+              if (current_node->unodes[i]->value == 1){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = 1 - fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+            }
+            else{
+              if (current_node->unodes[i]->value == 1){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && (1 - fault_list_valid[current_node->unodes[i]->indx][fault_ind2]);
+                  }
+              }
+            }
+          }
+        }
+        // Add the fault of the wire itself
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
       }
-   }
-   //********** step 4: print all detectable faults at the outputs *//   
-   for (std::set< std::pair<int, int> >::iterator it = detectable_faults.begin(); it != detectable_faults.end(); ++it) {
-      fprintf(fp, "%d@%d\n", (*it).first, (*it).second);   
-   }
-   
-   // release all fault lists
-   for (int i = 0; i < Nnodes; i++)
-      delete(Node[i].fault_list);
-
-   fclose(fp);
+      case NOR:{
+        if (current_node->value == 1){ // Add the union of the previous faults
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value==0){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+                }
+            }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value==0){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] || fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+                }
+              }
+          }
+      }
+        else{
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+              if (current_node->unodes[i]->value == 1){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = 1 - fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+            }
+            else{
+              if (current_node->unodes[i]->value == 1){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && (1 - fault_list_valid[current_node->unodes[i]->indx][fault_ind2]);
+                  }
+              }
+            }
+          }
+        }
+        // Add the fault of the wire itself
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
+      }
+      case NOT:{
+        for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+          fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+        }
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
+      }
+      case NAND:{
+        if (current_node->value == 0){ // Add the union of the previous faults
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+                }
+            }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] || fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+                }
+              }
+          }
+      }
+        else{
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+              if (current_node->unodes[i]->value == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = 1 - fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+            }
+            else{
+              if (current_node->unodes[i]->value == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && (1 - fault_list_valid[current_node->unodes[i]->indx][fault_ind2]);
+                  }
+              }
+            }
+          }
+        }
+        // Add the fault of the wire itself
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
+      }
+      case AND:{
+        if (current_node->value == 1){ // Add the union of the previous faults
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+                }
+            }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                  if (current_node->unodes[i]->value){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] || fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+                }
+              }
+          }
+      }
+        else{
+          for (i = 0; i < current_node->fin; i++){
+            if (i == 0){
+              if (current_node->unodes[i]->value == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = 1 - fault_list_valid[current_node->unodes[0]->indx][fault_ind2];
+                  }
+              }
+            }
+            else{
+              if (current_node->unodes[i]->value == 0){
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && fault_list_valid[current_node->unodes[i]->indx][fault_ind2];
+                  }
+              }
+              else{
+                for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+                    fault_list_valid[current_node->indx][fault_ind2] = fault_list_valid[current_node->indx][fault_ind2] && (1 - fault_list_valid[current_node->unodes[i]->indx][fault_ind2]);
+                  }
+              }
+            }
+          }
+        }
+        // Add the fault of the wire itself
+        fault_list_valid[current_node->indx][2 * current_node->indx + current_node->value] = 1;
+        break;
+      }
+      default:;
+    }
+ //    for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+  //    if (fault_list_valid[current_node->indx][fault_ind2]){
+  //      printf("Node_index: %d, Fault_index: %d s@%d\n", current_node->indx, (int)(fault_ind2 /2), 1 - (fault_ind2 % 2));
+  //    }
+  // }
+    if (current_node->next_node == NULL){
+      break;
+    }
+    current_node = current_node->next_node;
+  }
+  // Last step: print the output to file
+  FILE* dfs_output;
+  if (!atpg_flag)
+  {
+    dfs_output = fopen(fault_output_name,"w");
+  }
+  
+  // Initialize the final fault list. 
+  int* final_list = new int[2 * Nnodes];
+  for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+    final_list[fault_ind2] = 0;
+  }
+  // Get the faults detected by each output port. 
+  for(i = 0; i < Npo; i++){
+    for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++){
+      if (fault_list_valid[Poutput[i]->indx][fault_ind2]){
+        final_list[fault_ind2] = 1;
+      }
+    }
+  }
+  if (!atpg_flag)
+  {
+    for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++)
+    {
+      if (final_list[fault_ind2]){
+        printf("Total - Fault_index: %d s@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2)); //sa1, sa0
+        fprintf(dfs_output, "%d@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2));
+        //printf("can dectect- Fault_index: %d s@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2)); //sa1, sa0
+      }
+      else    //Zeming
+      {
+        ;
+        //printf("cannot dectect- Fault_index: %d s@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2)); //sa1, sa0
+      }
+    }
+    fclose(dfs_output);
+  }
+  else    //atpg flag == 1
+  {
+    for (fault_ind2 = 0; fault_ind2 < 2 * Nnodes; fault_ind2++)
+    {
+      if (final_list[fault_ind2]){
+        //printf("Total - Fault_index: %d s@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2)); //sa1, sa0
+        fault_dic.push_back(1);     //push_back << first in to left most   //Zeming
+        fault_dic_node.push_back(map_indx_num[(int)(fault_ind2 /2)]);
+        //printf("can dectect- Fault_index: %d s@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2)); //sa1, sa0
+      }
+      else    //Zeming
+      {
+        fault_dic.push_back(0); 
+        fault_dic_node.push_back(map_indx_num[(int)(fault_ind2 /2)]);
+        //printf("cannot dectect- Fault_index: %d s@%d\n", map_indx_num[(int)(fault_ind2 /2)], 1 - (fault_ind2 % 2)); //sa1, sa0
+      }
+    }
+    
+  }
+  if (!atpg_flag)
+  {
+    printf("DFS=> OK\n");
+  }
+  
+  return 0;
 }
+
+// int dfs(char *cp) {
+//    char infile[MAXLINE], outfile[MAXLINE];
+//    FILE *fp = NULL;
+//    std::queue<NSTRUC*> qnodes;
+//    std::vector<int> pi_idx;
+//    std::queue<int> in_value;
+//    std::set<std::pair<int, int> > detectable_faults;
+//    NSTRUC *np;
+//    int level_idx = 1;
+
+//    // the levelization information is required for simulation
+//    lev((char *)(""));
+
+//    // parse the input and output filenames
+//    if (sscanf(cp, "%s %s", &infile, &outfile) != 2) {printf("Incorrect input\n"); return 0;}
+//    printf("%s\n", infile);
+//    printf("%s\n", outfile);
+//    fp = fopen(outfile, "w");
+
+//    // read inputs
+//    read_inputs(infile, &pi_idx, &in_value);
+
+//    int loop = in_value.size() / pi_idx.size(); // loop is the number of input patterns
+
+//    for (int l = 0; l < loop; l++) { // simulate for each input
+
+//       reset_fault_list();
+
+//       //********** step 1: simulate values of all nodes **********//
+//       //********** step 2: create fault list for each node, starting from the PIs **********//
+//       // assign primary input values
+//       for (int i = 0; i < pi_idx.size(); i++) {
+//          for (int j = 0; j < Npi; j++) {
+//             if (Pinput[j]->num == pi_idx[i]) {
+//                Pinput[j]->value = in_value.front();
+//                Pinput[j]->fault_list->insert(std::make_pair(Pinput[j]->num, (Pinput[j]->value == 1 ? 0 : 1)));
+//                printf("input %d has value %d\n", Pinput[j]->num, Pinput[j]->value);
+//                in_value.pop();
+//                break;
+//             }
+//          }
+//       }
+
+//       // simulate values of each wires level by level according to their levelization
+//       // first push all down nodes of primary inputs which are at level 1
+//       // since the values of inputs are already decided, their values can be simulated
+//       for (int i = 0; i < Npi; i++) 
+//          for (int j = 0; j < Pinput[i]->fout; j++) 
+//             if (Pinput[i]->dnodes[j]->level == 1)
+//                qnodes.push(Pinput[i]->dnodes[j]);
+
+//       while(!qnodes.empty()) {
+//          np = qnodes.front();
+//          qnodes.pop();
+//          sim(np);
+//          //********** step 3: propagate fault lists **********//
+//          // case 1: all inputs have non-controlling values, the union of the fault lists of all inputs will be propagated
+//          // case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
+//          propagate_fault(np);
+//          // for each down node, if its level is exactly 1 larger than the current node,
+//          // it will be pushed into the queue. Otherwise, it will be pushed into the queue
+//          // later, since not all of its inputs' values are decided yet.
+//          for (int i = 0; i < np->fout; i++) {
+//             if (np->dnodes[i]->level == (np->level + 1))
+//                qnodes.push(np->dnodes[i]);
+//          }
+//       }
+//       for (int i = 0; i < Npo; i++) {
+//          for (std::set< std::pair<int, int> >::iterator it = Poutput[i]->fault_list->begin(); it != Poutput[i]->fault_list->end(); ++it) {
+//             detectable_faults.insert(*it);
+//          }   
+//       }
+//    }
+//    //********** step 4: print all detectable faults at the outputs *//   
+//    for (std::set< std::pair<int, int> >::iterator it = detectable_faults.begin(); it != detectable_faults.end(); ++it) {
+//       fprintf(fp, "%d@%d\n", (*it).first, (*it).second);   
+//    }
+   
+//    // release all fault lists
+//    for (int i = 0; i < Nnodes; i++)
+//       delete(Node[i].fault_list);
+
+//    fclose(fp);
+//    return 0;
+// }
 
 
 /*-----------------------------------------------------------------------
@@ -595,7 +1200,7 @@ description:
 //    case 2: some inputs have controlling values, the intersection of the fault lists of controlling inputs and the complement lists of non-controlling inputs will be propagated
 // step 4: print all detectable faults at the outputs
 
-void pfs(char *cp) {
+int pfs(char *cp) {
    long l;
    int bw, value, idx, fv;
    char temp;
@@ -617,7 +1222,7 @@ void pfs(char *cp) {
    // parse the input and output filenames
    if (sscanf(cp, "%s %s %s", &infile1, &infile2, &outfile) != 3) {
       printf("Incorrect input\n");
-      return;
+      return 0;
    }
    printf("input file name: %s\n", infile1);
    printf("fault file name: %s\n", infile2);
@@ -625,7 +1230,7 @@ void pfs(char *cp) {
 
    if ((fi = fopen(infile1, "r")) == NULL) {
       printf("File %s does not exist!\n", infile1);
-      return;
+      return 0;
    }
    fo = fopen(outfile, "w");
 
@@ -657,7 +1262,7 @@ void pfs(char *cp) {
       // open the fault list file
       if ((ff = fopen(infile2, "r")) == NULL) {
          printf("File %s does not exist!\n", infile2);
-         return;
+         return 0;
       }
 
       // for every bw - 1 faults:
@@ -714,6 +1319,7 @@ void pfs(char *cp) {
       fprintf(fo, "%d@%d\n", (*it).first, (*it).second);
    }
    fclose(fo);
+   return 0;
 };
 
 void report_faults(std::set<std::pair<int, int> > * detected_faults, std::vector<std::pair<int, int> > * loaded_faults) {
@@ -802,7 +1408,7 @@ description:
   with these test patterns using the PFS (single pattern, parallel faults
   simulation) method.
 -----------------------------------------------------------------------*/
-void rtg(char *cp) {
+int rtg(char *cp) {
    int ntot, ntfcr;
    char tp_report[MAXLINE], fc_report[MAXLINE];
    FILE *ftp = NULL, *ffc = NULL;   
@@ -817,7 +1423,7 @@ void rtg(char *cp) {
    lev((char *)(""));
 
    // parse the input and output filenames
-   if (sscanf(cp, "%d %d %s %s", &ntot, &ntfcr, &tp_report, &fc_report) != 4) {printf("Incorrect input\n"); return;}
+   if (sscanf(cp, "%d %d %s %s", &ntot, &ntfcr, &tp_report, &fc_report) != 4) {printf("Incorrect input\n"); return 0;}
    printf("test pattern report file: %s\n", tp_report);
    printf("fc report file: %s\n", fc_report);
    ftp = fopen(tp_report, "w");
@@ -843,6 +1449,7 @@ void rtg(char *cp) {
          // report_fc(ffc, fc);
          fprintf(ffc, "%.2f\n", fc * 100);
    }
+   return 0;
 }
 
 void dfs_single(std::queue<int> * test_pattern, std::set<std::pair<int, int> > * detected_faults) {
@@ -1268,4 +1875,18 @@ int fault_bit_comparison(int fault_n, int bit_width){
     return number_words ;
 }
 
+
+void clear_mem()
+{
+   int i;
+
+   for(i = 0; i<Nnodes; i++) {
+      free(Node[i].unodes);
+      free(Node[i].dnodes);
+   }
+   free(Node);
+   free(Pinput);
+   free(Poutput);
+   Gstate = EXEC;
+}
 /*========================= End of program ============================*/
